@@ -51,6 +51,10 @@ const TextAreaList: FC<Props> = props => {
 
   const onKeyDown = (e: KeyboardEvent, index: number): void => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      updateLocalItem(index, localItems[index] + '\n')
+    }
+
+    if (e.key === 'Enter') {
       e.preventDefault()
       addItem()
     }
@@ -59,7 +63,6 @@ const TextAreaList: FC<Props> = props => {
 
     if (e.key === 'Backspace' && shouldDelete) {
       e.preventDefault()
-
       deleteItem(index)
     }
   }
@@ -83,8 +86,8 @@ const TextAreaList: FC<Props> = props => {
             <div key={keys[index]} className={style.contentAnswer}>
               <BotpressContentPicker
                 itemId={item.replace('#!', '')}
-                onClickChange={() => this.toggleEditMode(index)}
-                onChange={this.onContentChange}
+                onClickChange={() => (this as any).toggleEditMode(index)}
+                onChange={(this as any).onContentChange}
               />
               <Button icon="trash" onClick={() => deleteItem(index)} />
             </div>

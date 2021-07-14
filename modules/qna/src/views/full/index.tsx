@@ -1,16 +1,17 @@
 import { Spinner } from '@blueprintjs/core'
 import { EmptyState, HeaderButtonProps, lang, MainLayout } from 'botpress/shared'
-import { Downloader, reorderFlows } from 'botpress/utils'
 import cx from 'classnames'
 import { debounce } from 'lodash'
 import React, { FC, useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
-import style from './style.scss'
-import { dispatchMiddleware, fetchReducer, itemHasError, ITEMS_PER_PAGE, Props } from './utils/qnaList.utils'
 import ContextSelector from './Components/ContextSelector'
+import { Downloader } from './Components/Downloader'
 import { ImportModal } from './Components/ImportModal'
 import QnA from './Components/QnA'
 import EmptyStateIcon from './Icons/EmptyStateIcon'
+import style from './style.scss'
+import { dispatchMiddleware, fetchReducer, itemHasError, ITEMS_PER_PAGE, Props } from './utils/qnaList.utils'
+import { reorderFlows } from './utils/studio-utils'
 
 const QnAList: FC<Props> = props => {
   const [flows, setFlows] = useState([])
@@ -92,7 +93,7 @@ const QnAList: FC<Props> = props => {
   }, [fetchMore])
 
   const fetchFlows = () => {
-    bp.axios.get('/flows').then(({ data }) => {
+    bp.axios.get('/flows', { baseURL: window.STUDIO_API_PATH }).then(({ data }) => {
       setFlows(reorderFlows(data.filter(flow => !flow.name.startsWith('skills/'))))
     })
   }
@@ -213,29 +214,37 @@ const QnAList: FC<Props> = props => {
 
   const hasFilteredResults = questionSearch.length || filterContexts.length
 
+  const toolBarRightContent = (
+    <div className={style.searchWrapper}>
+      <input
+        className={style.input}
+        type="text"
+        value={questionSearch}
+        onChange={e => setQuestionSearch(e.currentTarget.value)}
+        placeholder={lang.tr('module.qna.search')}
+      />
+
+      {!isLite && (
+        <ContextSelector
+          className={style.contextInput}
+          contexts={filterContexts}
+          saveContexts={contexts => setFilterContexts(contexts)}
+          bp={bp}
+          isSearch
+        />
+      )}
+    </div>
+  )
+
   return (
     <MainLayout.Wrapper childRef={ref => (wrapperRef.current = ref)}>
-      <MainLayout.Toolbar className={style.header} tabChange={setCurrentTab} tabs={tabs} buttons={buttons} />
-
-      <div className={style.searchWrapper}>
-        <input
-          className={style.input}
-          type="text"
-          value={questionSearch}
-          onChange={e => setQuestionSearch(e.currentTarget.value)}
-          placeholder={lang.tr('module.qna.search')}
-        />
-
-        {!isLite && (
-          <ContextSelector
-            className={style.contextInput}
-            contexts={filterContexts}
-            saveContexts={contexts => setFilterContexts(contexts)}
-            bp={bp}
-            isSearch
-          />
-        )}
-      </div>
+      <MainLayout.Toolbar
+        className={style.header}
+        tabChange={setCurrentTab}
+        tabs={tabs}
+        buttons={buttons}
+        rightContent={items.length > 1 ? toolBarRightContent : null}
+      />
       <div className={cx(style.content, { [style.empty]: !items.length && !highlighted })}>
         {highlighted && (
           <div className={style.highlightedQna}>
@@ -246,6 +255,9 @@ const QnAList: FC<Props> = props => {
                   data: { qnaItem: data, index: 'highlighted', bp, currentLang }
                 })
               }
+              convertToIntent={() => {
+                dispatch({ type: 'convertQnA', data: { index: 'highlighted', bp } })
+              }}
               bp={bp}
               isLite={isLite}
               key={highlighted.id}
@@ -289,6 +301,7 @@ const QnAList: FC<Props> = props => {
               isLite={isLite}
               flows={flows}
               defaultLanguage={defaultLanguage}
+              convertToIntent={() => dispatch({ type: 'convertQnA', data: { index, bp } })}
               deleteQnA={() => dispatch({ type: 'deleteQnA', data: { index, bp } })}
               toggleEnabledQnA={() =>
                 dispatchMiddleware(dispatch, { type: 'toggleEnabledQnA', data: { qnaItem: item, bp } })

@@ -1,16 +1,13 @@
-import { Logger } from 'botpress/sdk'
 import * as sdk from 'botpress/sdk'
 import { EntityDefCreateSchema, IntentDefCreateSchema } from 'common/validation'
-import AuthService, { TOKEN_AUDIENCE } from 'core/services/auth/auth-service'
+import { CustomRouter } from 'core/routers/customRouter'
+import { AuthService, TOKEN_AUDIENCE, checkTokenHeader, needPermissions } from 'core/security'
 import { NLUService } from 'core/services/nlu/nlu-service'
-import { WorkspaceService } from 'core/services/workspace-service'
+import { WorkspaceService } from 'core/users'
 import { RequestHandler, Router } from 'express'
 import { validate } from 'joi'
 import _ from 'lodash'
 import yn from 'yn'
-
-import { CustomRouter } from '../customRouter'
-import { checkTokenHeader, needPermissions } from '../util'
 
 const removeSlotsFromUtterances = (utterances: { [key: string]: any }, slotNames: string[]) =>
   _.fromPairs(
@@ -25,7 +22,7 @@ export class NLURouter extends CustomRouter {
   private _needPermissions: (operation: string, resource: string) => RequestHandler
 
   constructor(
-    private logger: Logger,
+    private logger: sdk.Logger,
     private authService: AuthService,
     private workspaceService: WorkspaceService,
     private nluService: NLUService
@@ -209,7 +206,7 @@ export class NLURouter extends CustomRouter {
             .forBot(botId)
             .attachError(err)
             .error(`Could not get entity ${entityName}`)
-          res.send(400)
+          res.sendStatus(400)
         }
       })
     )

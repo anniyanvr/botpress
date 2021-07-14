@@ -37,6 +37,7 @@ declare module 'botpress/sdk' {
     id?: number
     password?: string
     salt?: string
+    tokenVersion: number
   } & UserInfo
 
   export interface UserInfo {
@@ -206,7 +207,11 @@ declare module 'botpress/sdk' {
     moduleView?: ModuleViewOptions
     /** If set to true, no menu item will be displayed */
     noInterface?: boolean
-    /** An icon to display next to the name, if none is specified, it will receive a default one */
+    /**
+     * An icon to display next to the name, if none is specified, it will receive a default one
+     * There is a separate icon for the admin and the studio, if you set menuIcon to 'icon.svg',
+     * please provide an icon named 'studio_icon.svg' and 'admin_icon.svg'
+     */
     menuIcon?: string
     /**
      * The name displayed on the menu
@@ -217,6 +222,13 @@ declare module 'botpress/sdk' {
     homepage?: string
     /** Whether or not the module is likely to change */
     experimental?: boolean
+    /** Workspace Apps are accessible on the admin panel */
+    workspaceApp?: {
+      /** Adds a link on the Bots page to access this app for a specific bot */
+      bots?: boolean
+      /** Adds an icon on the menu to access this app without a bot ID */
+      global?: boolean
+    }
   }
 
   /**
@@ -264,272 +276,7 @@ declare module 'botpress/sdk' {
     public static forAdmins(eventName: string, payload: any): RealTimePayload
   }
 
-  export namespace MLToolkit {
-    export namespace FastText {
-      export type TrainCommand = 'supervised' | 'quantize' | 'skipgram' | 'cbow'
-      export type Loss = 'hs' | 'softmax'
-
-      export interface TrainArgs {
-        lr: number
-        dim: number
-        ws: number
-        epoch: number
-        minCount: number
-        minCountLabel: number
-        neg: number
-        wordNgrams: number
-        loss: Loss
-        model: string
-        input: string
-        bucket: number
-        minn: number
-        maxn: number
-        thread: number
-        lrUpdateRate: number
-        t: number
-        label: string
-        pretrainedVectors: string
-        qout: boolean
-        retrain: boolean
-        qnorm: boolean
-        cutoff: number
-        dsub: number
-      }
-
-      export interface PredictResult {
-        label: string
-        value: number
-      }
-
-      export interface Model {
-        cleanup: () => void
-        trainToFile: (method: TrainCommand, modelPath: string, args: Partial<TrainArgs>) => Promise<void>
-        loadFromFile: (modelPath: string) => Promise<void>
-        predict: (str: string, nbLabels: number) => Promise<PredictResult[]>
-        queryWordVectors(word: string): Promise<number[]>
-        queryNearestNeighbors(word: string, nb: number): Promise<string[]>
-      }
-
-      export interface ModelConstructor {
-        new (): Model
-        new (lazy: boolean, keepInMemory: boolean, queryOnly: boolean): Model
-      }
-
-      export const Model: ModelConstructor
-    }
-
-    export namespace KMeans {
-      export interface KMeansOptions {
-        maxIterations?: number
-        tolerance?: number
-        withIterations?: boolean
-        distanceFunction?: DistanceFunction
-        seed?: number
-        initialization?: 'random' | 'kmeans++' | 'mostDistant' | number[][]
-      }
-
-      export interface Centroid {
-        centroid: number[]
-        error: number
-        size: number
-      }
-
-      // TODO convert this to class we build the source of ml-kmeans
-      export interface KmeansResult {
-        // constructor(
-        //   clusters: number[],
-        //   centroids: Centroid[],
-        //   converged: boolean,
-        //   iterations: number,
-        //   distance: DistanceFunction
-        // )
-        clusters: number[]
-        centroids: Centroid[]
-        iterations: number
-        nearest: (data: DataPoint[]) => number[]
-      }
-
-      export type DataPoint = number[]
-
-      export type DistanceFunction = (point0: DataPoint, point1: DataPoint) => number
-
-      export const kmeans: (data: DataPoint[], K: number, options: KMeansOptions) => KmeansResult
-    }
-
-    export namespace SVM {
-      export interface SVMOptions {
-        classifier: 'C_SVC' | 'NU_SVC' | 'ONE_CLASS' | 'EPSILON_SVR' | 'NU_SVR'
-        kernel: 'LINEAR' | 'POLY' | 'RBF' | 'SIGMOID'
-        seed: number
-        c?: number | number[]
-        gamma?: number | number[]
-        probability?: boolean
-        reduce?: boolean
-      }
-
-      export interface DataPoint {
-        label: string
-        coordinates: number[]
-      }
-
-      export interface Prediction {
-        label: string
-        confidence: number
-      }
-
-      export interface TrainProgressCallback {
-        (progress: number): void
-      }
-
-      export class Trainer {
-        constructor()
-        train(points: DataPoint[], options?: SVMOptions, callback?: TrainProgressCallback): Promise<string>
-        isTrained(): boolean
-      }
-
-      export class Predictor {
-        constructor(model: string)
-        predict(coordinates: number[]): Promise<Prediction[]>
-        isLoaded(): boolean
-        getLabels(): string[]
-      }
-    }
-
-    export namespace CRF {
-      export class Tagger {
-        tag(xseq: Array<string[]>): { probability: number; result: string[] }
-        open(model_filename: string): boolean
-        marginal(xseq: Array<string[]>): { [label: string]: number }[]
-      }
-
-      export interface TrainerOptions {
-        [key: string]: string
-      }
-
-      export interface TrainProgressCallback {
-        (iteration: number): void
-      }
-
-      interface DataPoint {
-        features: Array<string[]>
-        labels: string[]
-      }
-
-      export class Trainer {
-        train(elements: DataPoint[], options: TrainerOptions, progressCallback?: TrainProgressCallback): Promise<string>
-      }
-    }
-
-    export namespace SentencePiece {
-      export interface Processor {
-        loadModel: (modelPath: string) => void
-        encode: (inputText: string) => string[]
-        decode: (pieces: string[]) => string
-      }
-
-      export const createProcessor: () => Processor
-    }
-  }
-
   export namespace NLU {
-    export namespace errors {
-      export const isTrainingCanceled: (err: Error) => boolean
-      export const isTrainingAlreadyStarted: (err: Error) => boolean
-    }
-
-    export const makeEngine: (config: Config, logger: Logger) => Promise<Engine>
-
-    export interface Config extends LanguageConfig {
-      modelCacheSize: number
-    }
-
-    export interface LanguageConfig {
-      ducklingURL: string
-      ducklingEnabled: boolean
-      languageSources: LanguageSource[]
-    }
-
-    export interface LanguageSource {
-      endpoint: string
-      authToken?: string
-    }
-
-    export interface Logger {
-      info: (msg: string) => void
-      warning: (msg: string, err?: Error) => void
-      error: (msg: string, err?: Error) => void
-    }
-
-    export interface TrainingSet {
-      intentDefs: NLU.IntentDefinition[]
-      entityDefs: NLU.EntityDefinition[]
-      languageCode: string
-      seed: number // seeds random number generator in nlu training
-    }
-
-    export interface ModelIdArgs extends TrainingSet {
-      specifications: Specifications
-    }
-
-    export interface TrainingOptions {
-      progressCallback: (x: number) => void
-      previousModel: ModelId | undefined
-    }
-
-    export interface Engine {
-      getHealth: () => Health
-      getLanguages: () => string[]
-      getSpecifications: () => Specifications
-      loadModel: (model: Model) => Promise<void>
-      unloadModel: (modelId: ModelId) => void
-      hasModel: (modelId: ModelId) => boolean
-      train: (trainSessionId: string, trainSet: TrainingSet, options?: Partial<TrainingOptions>) => Promise<Model>
-      cancelTraining: (trainSessionId: string) => Promise<void>
-      detectLanguage: (text: string, modelByLang: Dic<ModelId>) => Promise<string>
-      predict: (text: string, ctx: string[], modelId: ModelId) => Promise<IO.EventUnderstanding>
-      spellCheck: (sentence: string, modelId: ModelId) => Promise<string>
-    }
-
-    export const modelIdService: {
-      toString: (modelId: ModelId) => string // to use ModelId as a key
-      fromString: (stringId: string) => ModelId // to parse information from a key
-      toId: (m: Model) => ModelId // keeps only minimal information to make an id
-      isId: (m: string) => boolean
-      makeId: (factors: ModelIdArgs) => ModelId
-      briefId: (factors: Partial<ModelIdArgs>) => Partial<ModelId> // makes incomplete Id from incomplete information
-    }
-
-    export interface ModelId {
-      specificationHash: string // represents the nlu engine that was used to train the model
-      contentHash: string // represents the intent and entity definitions the model was trained with
-      seed: number // number to seed the random number generators used during nlu training
-      languageCode: string // language of the model
-    }
-
-    export interface Specifications {
-      nluVersion: string // semver string
-      languageServer: {
-        dimensions: number
-        domain: string
-        version: string // semver string
-      }
-    }
-
-    export type Model = ModelId & {
-      startedAt: Date
-      finishedAt: Date
-      data: {
-        input: string
-        output: string
-      }
-    }
-
-    export interface Health {
-      isEnabled: boolean
-      validProvidersCount: number
-      validLanguages: string[]
-    }
-
     /**
      * idle : occures when there are no training sessions for a bot
      * done : when a training is complete
@@ -554,7 +301,6 @@ declare module 'botpress/sdk' {
       status: TrainingStatus
       language: string
       progress: number
-      lock?: RedisLock
     }
 
     export type EntityType = 'system' | 'pattern' | 'list'
@@ -577,6 +323,7 @@ declare module 'botpress/sdk' {
     }
 
     export interface SlotDefinition {
+      id: string
       name: string
       entities: string[]
       color: number
@@ -587,7 +334,6 @@ declare module 'botpress/sdk' {
       utterances: {
         [lang: string]: string[]
       }
-      filename: string
       slots: SlotDefinition[]
       contexts: string[]
     }
@@ -596,7 +342,6 @@ declare module 'botpress/sdk' {
       name: string
       confidence: number
       context: string
-      matches?: (intentPattern: string) => boolean
     }
 
     export interface Entity {
@@ -626,7 +371,7 @@ declare module 'botpress/sdk' {
       name: string
       value: any
       source: any
-      entity: Entity
+      entity: Entity | null
       confidence: number
       start: number
       end: number
@@ -634,17 +379,15 @@ declare module 'botpress/sdk' {
 
     export type SlotCollection = Dic<Slot>
 
-    export interface Predictions {
-      [context: string]: {
+    export interface ContextPrediction {
+      confidence: number
+      oos: number
+      intents: {
+        label: string
         confidence: number
-        oos: number
-        intents: {
-          label: string
-          confidence: number
-          slots: SlotCollection
-          extractor: 'exact-matcher' | 'classifier'
-        }[]
-      }
+        slots: NLU.SlotCollection
+        extractor: string
+      }[]
     }
   }
 
@@ -728,6 +471,7 @@ declare module 'botpress/sdk' {
       credentials?: any
       nlu?: Partial<EventUnderstanding>
       incomingEventId?: string
+      debugger?: boolean
     }
 
     /**
@@ -793,20 +537,35 @@ declare module 'botpress/sdk' {
     }
 
     export interface EventUnderstanding {
-      intent?: NLU.Intent
-      /** Predicted intents needs disambiguation */
-      readonly ambiguous?: boolean
-      intents?: NLU.Intent[]
-      /** The language used for prediction. Will be equal to detected language when its part of supported languages, falls back to default language otherwise */
-      readonly language: string
-      /** Language detected from users input. */
-      readonly detectedLanguage?: string
-      readonly spellChecked?: string
-      readonly entities: NLU.Entity[]
-      readonly slots?: NLU.SlotCollection
       readonly errored: boolean
+
+      readonly predictions?: {
+        [context: string]: {
+          confidence: number
+          oos: number
+          intents: {
+            label: string
+            confidence: number
+            slots: NLU.SlotCollection
+            extractor: string
+          }[]
+        }
+      }
+
+      // election
+      readonly entities?: NLU.Entity[]
+      readonly intent?: NLU.Intent
+      readonly intents?: NLU.Intent[]
+      readonly ambiguous?: boolean /** Predicted intents needs disambiguation */
+      readonly slots?: NLU.SlotCollection
+      readonly spellChecked?: string
+
+      // pre-prediction
+      readonly detectedLanguage:
+        | string
+        | undefined /** Language detected from users input. If undefined, detection failed. */
+      readonly language: string /** The language used for prediction */
       readonly includedContexts: string[]
-      readonly predictions?: NLU.Predictions
       readonly ms: number
     }
 
@@ -863,7 +622,7 @@ declare module 'botpress/sdk' {
        */
       bot: any
       /** Used internally by Botpress to keep the user's current location and upcoming instructions */
-      context: DialogContext
+      context?: DialogContext
       /** This variable points to the currently active workflow */
       workflow: WorkflowHistory
       /**
@@ -1013,6 +772,12 @@ declare module 'botpress/sdk' {
       handler: MiddlewareHandler
       /** Indicates if this middleware should act on incoming or outgoing events */
       direction: EventDirection
+      /**
+       * Allows to specify a timeout for the middleware instead of using the middleware chain timeout value
+       * @example '500ms', '2s', '5m'
+       * @default '2s'
+       * */
+      timeout?: string
     }
 
     export interface EventConstructor {
@@ -1037,18 +802,6 @@ declare module 'botpress/sdk' {
    * @see MiddlewareDefinition to learn more about middleware.
    */
   export type EventDirection = 'incoming' | 'outgoing'
-
-  export interface Notification {
-    botId: string
-    message: string
-    /** Can be info, error, success */
-    level: string
-    moduleId?: string
-    moduleIcon?: string
-    moduleName?: string
-    /** An URL to redirect to when the notification is clicked */
-    redirectUrl?: string
-  }
 
   export interface UpsertOptions {
     /** Whether or not to record a revision @default true */
@@ -1166,8 +919,8 @@ declare module 'botpress/sdk' {
       contentTypes: string[]
     }
     converse?: ConverseConfig
-    dialog?: DialogConfig
-    logs?: LogsConfig
+    dialog?: BotDialogConfig
+    logs?: BotLogsConfig
     defaultLanguage: string
     languages: string[]
     locked: boolean
@@ -1223,14 +976,14 @@ declare module 'botpress/sdk' {
     coverPictureUrl?: string
   }
 
-  export interface LogsConfig {
+  export interface BotLogsConfig {
     expiration: string
   }
 
   /**
    * Configuration definition of Dialog Sessions
    */
-  export interface DialogConfig {
+  export interface BotDialogConfig {
     /** The interval until a session context expires */
     timeoutInterval: string
     /** The interval until a session expires */
@@ -1251,6 +1004,16 @@ declare module 'botpress/sdk' {
      * @default 360
      */
     maxMessageLength: number
+    /**
+     * Number of milliseconds that the converse API will wait to buffer responses
+     * @default 250
+     */
+    bufferDelayMs: number
+    /**
+     * Whether or not you want to expose public converse API. See docs here https://botpress.com/docs/channels/converse#public-api
+     * @default ture
+     */
+    enableUnsecuredEndpoint: boolean
   }
 
   /**
@@ -1350,11 +1113,8 @@ declare module 'botpress/sdk' {
     displayOrder?: number
     /** This callback url is called when the condition is deleted or pasted in the flow */
     callback?: string
-    /** The editor will use the custom component to provide the requested parameters */
-    editor?: {
-      module: string
-      component: string
-    }
+    /** The editor will use the LiteEditor component to provide the requested parameters */
+    useLiteEditor?: boolean
     evaluate: (event: IO.IncomingEvent, params: any) => number
   }
 
@@ -1618,13 +1378,16 @@ declare module 'botpress/sdk' {
      */
     baseURL: string
     headers: {
-      Authorization: string
+      'CSRF-Token'?: string
+      Authorization?: string
       'X-BP-Workspace'?: string
     }
   }
 
   export interface MigrationResult {
     success: boolean
+    /** Indicates if the migration had to be executed  */
+    hasChanges?: boolean
     message?: string
   }
 
@@ -1717,6 +1480,150 @@ declare module 'botpress/sdk' {
     asChatUser?: boolean
   }
 
+  export type uuid = string
+
+  export interface ListOptions {
+    limit?: number
+    offset?: number
+  }
+
+  export interface Conversation {
+    id: uuid
+    userId: string
+    botId: string
+    createdOn: Date
+  }
+
+  export interface RecentConversation extends Conversation {
+    lastMessage?: Message
+  }
+
+  export interface ConversationDeleteFilters {
+    id?: uuid
+    userId?: string
+  }
+
+  export interface ConversationListFilters extends ListOptions {
+    userId: string
+  }
+
+  export interface Message {
+    id: uuid
+    conversationId: uuid
+    authorId: string | undefined
+    eventId?: string
+    incomingEventId?: string
+    sentOn: Date
+    payload: any
+  }
+
+  export interface MessageArgs
+    extends Partial<Omit<IO.EventCtorArgs, 'type' | 'direction' | 'payload' | 'target' | 'botId' | 'threadId'>> {}
+
+  export interface MessageDeleteFilters {
+    id?: uuid
+    conversationId?: uuid
+  }
+
+  export interface MessageListFilters extends ListOptions {
+    conversationId: uuid
+  }
+
+  export interface RenderPipeline {
+    text: typeof experimental.render.text
+    image: typeof experimental.render.image
+    card: typeof experimental.render.card
+    carousel: typeof experimental.render.carousel
+    choice: typeof experimental.render.choice
+    buttonSay: typeof experimental.render.buttonSay
+    buttonUrl: typeof experimental.render.buttonUrl
+    buttonPostback: typeof experimental.render.buttonPostback
+    option: typeof experimental.render.option
+  }
+
+  export interface Content {
+    type: string
+  }
+
+  export interface TextContent extends Content {
+    type: 'text'
+    text: string | MultiLangText
+    markdown?: boolean
+  }
+
+  export interface ImageContent extends Content {
+    type: 'image'
+    image: string
+    title?: string | MultiLangText
+  }
+
+  export interface AudioContent extends Content {
+    type: 'audio'
+    audio: string
+    title?: string | MultiLangText
+  }
+
+  export interface VideoContent extends Content {
+    type: 'video'
+    video: string
+    title?: string | MultiLangText
+  }
+
+  export interface CarouselContent extends Content {
+    type: 'carousel'
+    items: CardContent[]
+  }
+
+  export interface CardContent extends Content {
+    type: 'card'
+    title: string | MultiLangText
+    subtitle?: string | MultiLangText
+    image?: string
+    actions: ActionButton[]
+  }
+
+  export interface LocationContent extends Content {
+    type: 'location'
+    latitude: number
+    longitude: number
+    address?: string | MultiLangText
+    title?: string | MultiLangText
+  }
+
+  export enum ButtonAction {
+    SaySomething = 'Say something',
+    OpenUrl = 'Open URL',
+    Postback = 'Postback'
+  }
+
+  export interface ActionButton {
+    action: ButtonAction
+    title: string
+  }
+
+  export interface ActionSaySomething extends ActionButton {
+    text: string | MultiLangText
+  }
+
+  export interface ActionOpenURL extends ActionButton {
+    url: string
+  }
+
+  export interface ActionPostback extends ActionButton {
+    payload: string
+  }
+
+  export interface ChoiceContent extends Content {
+    type: 'single-choice'
+    text: string | MultiLangText
+    choices: ChoiceOption[]
+  }
+
+  export interface ChoiceOption {
+    title: string | MultiLangText
+    value: string
+  }
+
   ////////////////
   //////// API
   ////////////////
@@ -1730,6 +1637,11 @@ declare module 'botpress/sdk' {
      * @param payload The payload to send
      */
     export function sendPayload(payload: RealTimePayload)
+    /**
+     * Returns the corresponding the roomId in the /guest socket io namespace
+     * @param socketId id generated by socket.io
+     */
+    export function getVisitorIdFromGuestSocketId(socketId: string): Promise<undefined | string>
   }
 
   // prettier-ignore
@@ -1806,7 +1718,9 @@ declare module 'botpress/sdk' {
 
   export interface AxiosOptions {
     /** When true, it will return the local url instead of the external url  */
-    localUrl: boolean
+    localUrl?: boolean
+    /** Temporary property so modules can query studio routes */
+    studioUrl?: boolean
   }
 
   export interface RedisLock {
@@ -1925,7 +1839,7 @@ declare module 'botpress/sdk' {
      * from the user waiting in the queue.
      * @param event - Current event in the action context, used to identify the queue
      */
-    export function isIncomingQueueEmpty(event: IO.Event): boolean
+    export function isIncomingQueueEmpty(event: IO.IncomingEvent): boolean
 
     /**
      * When Event Storage is enabled, you can use this API to query data about stored events. You can use multiple fields
@@ -2014,8 +1928,9 @@ declare module 'botpress/sdk' {
     /**
      * Deletes a session
      * @param sessionId The Id of the session to delete
+     * @param botId The Id of the bot to which the session is tied
      */
-    export function deleteSession(sessionId: string): Promise<void>
+    export function deleteSession(sessionId: string, botId: string): Promise<void>
 
     /**
      * Jumps to a specific flow and optionally a specific node. This is useful when the default flow behavior needs to be bypassed.
@@ -2177,6 +2092,23 @@ declare module 'botpress/sdk' {
     ): Promise<void>
 
     export function getBotTemplate(moduleName: string, templateName: string): Promise<FileContent[]>
+
+    /**
+     * Allows hook developers to list revisions of a bot
+     * @param botId the ID of the target bot
+     */
+    export function listBotRevisions(botId: string): Promise<string[]>
+    /**
+     * Allows hook developers to create a new revision of a bot
+     * @param botId the ID of the target bot
+     */
+    export function createBotRevision(botId: string): Promise<void>
+    /**
+     * Allows hook developers to rollback
+     * @param botId the ID of the target bot
+     * @param revisionId the target revision ID to which you want to revert the chatbot
+     */
+    export function rollbackBotToRevision(botId: string, revisionId: string): Promise<void>
   }
 
   export namespace workspaces {
@@ -2213,10 +2145,6 @@ declare module 'botpress/sdk' {
       workspaceId: string,
       options?: Partial<GetWorkspaceUsersOptions>
     ): Promise<WorkspaceUser[] | WorkspaceUserWithAttributes[]>
-  }
-
-  export namespace notifications {
-    export function create(botId: string, notification: Notification): Promise<any>
   }
 
   export namespace ghost {
@@ -2344,5 +2272,335 @@ declare module 'botpress/sdk' {
   export namespace experimental {
     export function disableHook(hookName: string, hookType: string, moduleName?: string): Promise<boolean>
     export function enableHook(hookName: string, hookType: string, moduleName?: string): Promise<boolean>
+
+    export namespace conversations {
+      export function forBot(botId: string): BotConversations
+
+      export interface BotConversations {
+        /**
+         * Create a conversation to store in the db
+         * @param userId Id of the user to create a conversation with
+         * @returns The created conversation
+         * @example
+         * const conversation = await bp.conversations.forBot('myBot').create('eEFoneif394')
+         */
+        create(userId: uuid): Promise<Conversation>
+
+        /**
+         * Deletes conversations from the db
+         * @param filters Filters which conversations to delete
+         * @returns The number of deleted rows
+         * @example
+         * // Delete a conversation by id
+         * await bp.conversations.forBot('myBot').delete({ id: '9aa7da7a-9ab1-4a60-bedd-8bdca22beb03' })
+         * // Delete all conversations of a bot user
+         * await bp.conversations.forBot('myBot').delete({ userId: 'eEFoneif394' })
+         */
+        delete(filters: ConversationDeleteFilters): Promise<number>
+
+        /**
+         * Gets one conversation from the db
+         * @param id Id of the conversation to get
+         * @returns The matching conversation or `undefined` if none were found
+         * @example
+         * // Get conversation by id
+         * const converation = await bp.conversations.forBot('myBot').get('9aa7da7a-9ab1-4a60-bedd-8bdca22beb03'})
+         */
+        get(id: uuid): Promise<Conversation | undefined>
+
+        /**
+         * Gets many conversations from the db.
+         * The results are ordered from most recent to least recent
+         * @param filters Filters which conversations to get
+         * @example
+         * // Get the 20 most recent conversations of a bot user
+         * const conversations = await bp.conversations.forBot('myBot').list({ userId: 'eEFoneif394', limit: 20 })
+         */
+        list(filters: ConversationListFilters): Promise<RecentConversation[]>
+
+        /**
+         * Gets the most recent conversation of a user.
+         * If the user has no matching conversation, creates one
+         * @param userId Id of the user
+         * @example
+         * const conversation = await bp.conversations.forBot('myBot').recent('eEFoneif394')
+         */
+        recent(userId: uuid): Promise<Conversation>
+
+        /**
+         * Creates a mapping of ids for a conversation in a given channel
+         * @param channel The channel for which to create the mapping
+         * @param localId The id of the conversation in botpress
+         * @param foreignId The id of the conversation in that channel
+         * @example
+         * // I have been given an conversation id by facebook messenger
+         * const messengerConversationId = 134314
+         * // Let's say I have an already existing botpress conversation somewhere that I want to attach to this conversation
+         * const conversationId = '00001337-ca79-4235-8475-3785e41eb2be'
+         *
+         * // Create the mapping
+         * await bp.conversations.forBot(myBot).createMapping('facebook', conversationId, messengerConversationId)
+         * // Returns 134314
+         * await bp.conversations.forBot(myBot).getForeignId(conversationId)
+         * // Returns '00001337-ca79-4235-8475-3785e41eb2be'
+         * await bp.conversations.forBot(myBot).getLocalId(messengerConversationId)
+         */
+        createMapping(channel: string, localId: uuid, foreignId: string): Promise<void>
+
+        /**
+         * Deletes a conversation mapping
+         * @returns true if a conversation was deleted
+         */
+        deleteMapping(channel: string, localId: uuid, foreignId: string): Promise<boolean>
+
+        /**
+         * Gets a conversations id specific to the given channel from a botpress conversation id
+         */
+        getForeignId(channel: string, localId: uuid): Promise<string | undefined>
+
+        /**
+         * Gets a botpress conversation id from the foreign id of a conversation in a the given channel
+         */
+        getLocalId(channel: string, foreignId: string): Promise<string | undefined>
+      }
+    }
+
+    export namespace messages {
+      export function forBot(botId: string): BotMessages
+
+      export interface BotMessages {
+        /**
+         * Sends a outgoing message (bot message) through the event loop. The message is stored in the database
+         * @param conversationId Id of the conversation to which this message belongs to
+         * @param payload Payload of the message
+         * @param args Additional arguments to pass to the event constructor. Optional
+         * @example
+         * // Inside an action
+         * await bp.messages
+         *   .forBot(event.botId)
+         *   .send(event.threadId, { type: 'text', text: 'hello user!' })
+         */
+        send(conversationId: uuid, payload: any, args?: MessageArgs): Promise<Message>
+
+        /**
+         * Sends a incoming message (user message) through the event loop. The message is stored in the database
+         * @param conversationId Id of the conversation to which this message belongs to
+         * @param payload Payload of the message
+         * @param args Additional arguments to pass to the event constructor. Optional
+         * @example
+         * // Inside an action
+         * await bp.messages
+         *   .forBot(event.botId)
+         *   .receive(event.threadId, { type: 'text', text: 'this is a message from the user!' })
+         */
+        receive(conversationId: uuid, payload: any, args?: MessageArgs): Promise<Message>
+
+        /**
+         * Creates a message to store in the db
+         * @param args Properties of the message
+         * @returns The created message
+         * @example
+         * const message = await bp.messages
+         *   .forBot('myBot')
+         *   .create('9aa7da7a-9ab1-4a60-bedd-8bdca22beb03', { type: 'text', text: 'hello' }, 'user', '32242', '242224')
+         */
+        create(
+          conversationId: uuid,
+          payload: any,
+          authorId?: string,
+          eventId?: string,
+          incomingEventId?: string
+        ): Promise<Message>
+
+        /**
+         * Deletes messages from the db
+         * @param filters Filters which messages to delete
+         * @returns The number of deleted rows
+         * @example
+         * // Delete message by id
+         * await bp.messages.forBot('myBot').delete({ id: '00001337-ca79-4235-8475-3785e41eb2be' })
+         * @example
+         * // Delete all messages of a conversation
+         * await bp.messages.forBot('myBot').delete({ conversationId: '9aa7da7a-9ab1-4a60-bedd-8bdca22beb03' })
+         */
+        delete(filters: MessageDeleteFilters): Promise<number>
+
+        /**
+         * Gets one message from the db
+         * @param id Id of the message to get
+         * @returns The matching message or `undefined` if none were found
+         * @example
+         * // Get message by id
+         * const message = await bp.message.forBot('myBot').get('00001337-ca79-4235-8475-3785e41eb2be')
+         */
+        get(id: uuid): Promise<Message | undefined>
+
+        /**
+         * Gets many messages from the db.
+         * The results are ordered from most recent to least recent
+         * @param filters Filters which messages to get
+         * @example
+         * // Get 20 most recent messages of a conversation
+         * const messages = await bp.messages.forBot('myBot').list({ conversationId: '9aa7da7a-9ab1-4a60-bedd-8bdca22beb03', limit: 20 })
+         */
+        list(filters: MessageListFilters): Promise<Message[]>
+      }
+    }
+
+    /**
+     * WARNING : these payloads do not produce typing indicators yet!
+     */
+    export namespace render {
+      /**
+       * Renders a text element
+       * @param text Text to show
+       * @param markdown Indicates whether to use markdown
+       */
+      export function text(text: string | MultiLangText, markdown?: boolean): TextContent
+
+      /**
+       * Renders an image element
+       * @param url Url of the image to send
+       * @param caption Caption to appear alongside your image
+       */
+      export function image(url: string, caption?: string | MultiLangText): ImageContent
+
+      /**
+       * Renders an audio element
+       * @param url Url of the audio file to send
+       * @param caption Caption to appear alongside your audio
+       */
+      export function audio(url: string, caption?: string | MultiLangText): AudioContent
+
+      /**
+       * Renders a video element
+       * @param url Url of the video file to send
+       * @param caption Caption to appear alongside your video
+       */
+      export function video(url: string, caption?: string | MultiLangText): VideoContent
+
+      /**
+       * Renders a location element
+       * @param latitude Latitude of location in decimal degrees
+       * @param longitude Longitude of location in decimal degrees
+       * @param address Street adress associated with location
+       * @param title Explanatory title for this location
+       */
+      export function location(
+        latitude: number,
+        longitude: number,
+        address?: string | MultiLangText,
+        title?: string | MultiLangText
+      ): LocationContent
+
+      /**
+       * Renders a carousel element
+       * @param cards The cards of the carousel
+       * @example
+       * bp.render.carousel(bp.render.card('my card'), bp.render.card('my card 2'))
+       */
+      export function carousel(...cards: CardContent[]): CarouselContent
+
+      /**
+       * Renders a card element
+       * @param title The title of your card
+       * @param image The url of a pictured shown in your card
+       * @param subtitle A subtitle below your image
+       * @param buttons Action buttons for your card
+       * @example
+       * bp.render.card('my card', 'https://mysite.com/mypicture.png', 'an interesting subtitle', bp.render.buttonSay('hello'))
+       */
+      export function card(
+        title: string | MultiLangText,
+        image?: string,
+        subtitle?: string | MultiLangText,
+        ...buttons: ActionButton[]
+      ): CardContent
+
+      /**
+       * Renders an action button used to send a message to the conversation
+       * @param title Title shown on the button
+       * @param text Message to send
+       */
+      export function buttonSay(title: string, text: string | MultiLangText): ActionSaySomething
+
+      /**
+       * Renders an action button for opening urls
+       * @param title Title shown on the button
+       * @param text Url to open
+       */
+      export function buttonUrl(title: string, url: string): ActionOpenURL
+
+      /**
+       * Renders an action button for posting content
+       * @param title Title shown on the button
+       * @param payload Payload to post
+       */
+      export function buttonPostback(title: string, payload: string): ActionPostback
+
+      /**
+       * Render a choice element
+       * @param text Message to ask to the user
+       * @param choices Choices that the user can select
+       * @example
+       * bp.render.choice("Yes or no?", bp.render.option('yes'), bp.render.option('no'))
+       */
+      export function choice(text: string | MultiLangText, ...choices: ChoiceOption[]): ChoiceContent
+
+      /**
+       * Renders an option for a choice element
+       * @param value Value associated with the option
+       * @param title Text to shown to the user (has no impact on the processing).
+       * If not provided the value will be shown by default
+       */
+      export function option(value: string, title?: string): ChoiceOption
+
+      /**
+       * Translates a content element to a specific language
+       * @param content Content element to be translated
+       * @param lang Language code in which to translate (en, fr, es, etc.)
+       * @example
+       * const content = bp.render.text({ en: 'hello!', fr: 'salut!' })
+       * // content.text : { en: 'hello!', fr: 'salut!' }
+       * const translated = bp.render.translate(content, 'fr')
+       * // content.text : 'salut!'
+       */
+      export function translate<T extends Content>(content: T, lang: string): T
+
+      /**
+       * Renders a content element's {{mustaches}} using the provided context
+       * @param content The content element to be rendered
+       * @param context The context used to filled the {{mustaches}}
+       * @example
+       * const content = bp.render.text('{{user.name}} is awesome!')
+       * // content.text : '{{user.name}} is awesome!'
+       * const payload = bp.render.template(content, { user: { name: 'bob' } })
+       * // payload.text : 'bob is awesome!'
+       */
+      export function template<T extends Content>(content: T, context: any): T
+
+      /**
+       * Creates a pipeline for rendering, translating and templating content
+       * @param lang Language to use for translation
+       * @param context Context to use for templating
+       * @example
+       * // Doing all this
+       * const content = bp.render.text({ en: 'hello {{user.name}}', fr: 'salut {{user.name}}' })
+       * const translated = bp.render.translate(content, 'fr')
+       * const templated = bp.render.template(translated, { user: { name: 'bob' } })
+       *
+       * // Can be replaced by this
+       * const content = bp.render
+       *   .pipeline('fr', { user: { name: 'bob' } })
+       *   .text({ en: 'hello {{user.name}}', fr: 'salut {{user.name}}' })
+       *
+       * // You can reuse the same pipeline for multiple contents
+       * const render = bp.render.pipeline('fr', { user: { name: 'bob', age: 43, pin: 3030 } })
+       * const text1 = render.text({ en: 'hello {{user.name}}', fr: 'salut {{user.name}}' })
+       * const text2 = render.text({ en: 'age : {{user.age}}', fr: 'âge : {{user.age}}' })
+       * const text3 = render.text('PIN : {{user.pin}}')
+       */
+      export function pipeline(lang: string, context: any): RenderPipeline
+    }
   }
 }

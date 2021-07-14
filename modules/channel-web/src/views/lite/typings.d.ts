@@ -2,6 +2,7 @@ import { RootStore } from './store'
 
 declare global {
   interface Window {
+    __BP_VISITOR_SOCKET_ID: string
     __BP_VISITOR_ID: string
     botpressWebChat: any
     store: RootStore
@@ -46,6 +47,10 @@ export namespace Renderer {
 
     onSendData?: (data: any) => Promise<void>
     onFileUpload?: (label: string, payload: any, file: File) => Promise<void>
+
+    /** Allows to autoplay voice messages coming from the bot */
+    onAudioEnded?: () => void
+    shouldPlay?: boolean
   }
 
   export type Button = {
@@ -77,11 +82,22 @@ export namespace Renderer {
   export interface FileMessage {
     file: {
       url: string
-      name: string
+      title: string
       storage: string
       text: string
     }
     escapeTextHTML: boolean
+  }
+
+  export interface VoiceMessage {
+    file: {
+      type: string
+      audio: string
+      autoPlay?: boolean
+    }
+
+    shouldPlay: boolean
+    onAudioEnded: () => void
   }
 
   export interface FileInput {
@@ -144,6 +160,7 @@ export interface Config {
   showUserAvatar: boolean
   showTimestamp: boolean
   enableTranscriptDownload: boolean
+  enableConversationDeletion: boolean
   enableArrowNavigation: boolean
   closeOnEscape: boolean
   botName?: string
@@ -164,6 +181,8 @@ export interface Config {
   disableAnimations: boolean
   /** When true, sets ctrl+Enter as shortcut for reset session then send */
   enableResetSessionShortcut: boolean
+  /** When true, webchat tries to use native webspeech api (uses hosted mozilla and google voice services) */
+  enableVoiceComposer: boolean
   recentConversationLifetime: string
   startNewConvoOnTimeout: boolean
   /** Use sessionStorage instead of localStorage, which means the session expires when tab is closed */
@@ -179,6 +198,8 @@ export interface Config {
   reference: string
   /** If true, Websocket is created when the Webchat is opened. Bot cannot be proactive. */
   lazySocket?: boolean
+  /** If true, chat will no longer play the notification sound for new messages. */
+  disableNotificationSound?: boolean
   /** Refers to a specific webchat reference in parent window. Useful when using multiple chat window */
   chatId?: string
   /** CSS class to be applied to iframe */

@@ -6,16 +6,16 @@ import ms from 'ms'
 import { Config } from '../config'
 import { MODULE_NAME } from '../constants'
 
-import { IHandoff } from './../types'
-import { extendAgentSession, measure } from './helpers'
 import { StateType } from './index'
+import { IAgent, IHandoff } from './../types'
+import { extendAgentSession, measure } from './helpers'
 import Repository from './repository'
 import Socket from './socket'
 
 const debug = DEBUG(MODULE_NAME)
 
 const registerMiddleware = async (bp: typeof sdk, state: StateType) => {
-  const cache = new LRU<string, string>({ max: 1000, maxAge: ms('1 day') })
+  const handoffCache = new LRU<string, string>({ max: 1000, maxAge: ms('1 day') })
   const repository = new Repository(bp, state.timeouts)
   const realtime = Socket(bp)
 
@@ -27,17 +27,17 @@ const registerMiddleware = async (bp: typeof sdk, state: StateType) => {
   const handoffCacheKey = (botId: string, threadId: string) => [botId, threadId].join('.')
 
   const getCachedHandoff = (botId: string, threadId: string) => {
-    return cache.get(handoffCacheKey(botId, threadId))
+    return handoffCache.get(handoffCacheKey(botId, threadId))
   }
 
   const cacheHandoff = (botId: string, threadId: string, handoff: IHandoff) => {
     debug.forBot(botId, 'Caching handoff', { id: handoff.id, threadId })
-    cache.set(handoffCacheKey(botId, threadId), handoff.id)
+    handoffCache.set(handoffCacheKey(botId, threadId), handoff.id)
   }
 
   const expireHandoff = (botId: string, threadId: string) => {
     debug.forBot(botId, 'Expiring handoff', { threadId })
-    cache.del(handoffCacheKey(botId, threadId))
+    handoffCache.del(handoffCacheKey(botId, threadId))
   }
 
   const handleIncomingFromUser = async (handoff: IHandoff, event: sdk.IO.IncomingEvent) => {
@@ -81,10 +81,12 @@ const registerMiddleware = async (bp: typeof sdk, state: StateType) => {
 
   const handleIncomingFromAgent = async (handoff: IHandoff, event: sdk.IO.IncomingEvent) => {
     const { botAvatarUrl }: Config = await bp.config.getModuleConfigForBot(MODULE_NAME, event.botId)
+    const { attributes } = await repository.getAgent(handoff.agentId)
+
     Object.assign(event.payload, {
       from: 'agent',
-      botAvatarUrl
-    }) // TODO set avatar url from agent profile if nothing in config
+      botAvatarUrl: botAvatarUrl || attributes?.picture_url
+    })
 
     await pipeEvent(event, {
       botId: handoff.botId,

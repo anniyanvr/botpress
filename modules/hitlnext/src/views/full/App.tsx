@@ -5,33 +5,64 @@ import _ from 'lodash'
 import React, { FC, useContext, useEffect, useState } from 'react'
 
 import { IHandoff, ISocketMessage } from '../../types'
+import { castHandoff, makeClient } from '../client'
 
 import { WEBSOCKET_TOPIC } from './../../constants'
 import AgentList from './app/components/AgentList'
-import AgentProfile from './app/components/AgentProfile'
+import AgentStatus from './app/components/AgentStatus'
 import ConversationContainer from './app/components/ConversationContainer'
 import EmptyConversation from './app/components/EmptyConversation'
 import HandoffList from './app/components/HandoffList'
 import { Context, Store } from './app/Store'
 import style from './style.scss'
-import { Api, castHandoff } from './Api'
 
 interface Props {
   bp: { axios: AxiosInstance; events: any }
 }
 
 const App: FC<Props> = ({ bp }) => {
-  const api = Api(bp)
+  const api = makeClient(bp)
 
   const { state, dispatch } = useContext(Context)
 
   const [loading, setLoading] = useState(true)
 
-  function handleMessage(message: ISocketMessage) {
+  const handoffCreatedNotification = _.debounce(async () => {
+    if (document.visibilityState === 'hidden') {
+      await flashSound()
+    }
+  }, 1000)
+
+  const handoffUpdatedNotification = _.debounce(async () => {
+    if (!document.hasFocus()) {
+      flashTitle(lang.tr('module.hitlnext.newMessage'))
+    }
+  })
+
+  function flashTitle(message: string) {
+    const original = document.title
+    document.title = message
+
+    window.setTimeout(() => {
+      document.title = original
+    }, 1000)
+  }
+
+  async function flashSound() {
+    const audio = new Audio(`${window.ROOT_PATH}/assets/modules/channel-web/notification.mp3`)
+    await audio.play().catch(err => {}) // swallow, see https://goo.gl/xX8pDD
+  }
+
+  async function handleMessage(message: ISocketMessage) {
     switch (message.resource) {
       case 'agent':
         return dispatch({ type: 'setAgent', payload: message })
       case 'handoff':
+        if (message.type === 'update') {
+          await handoffUpdatedNotification()
+        } else if (message.type === 'create') {
+          await handoffCreatedNotification()
+        }
         return dispatch({
           type: 'setHandoff',
           payload: _.thru(message, () => {
@@ -92,7 +123,7 @@ const App: FC<Props> = ({ bp }) => {
   }
 
   useEffect(() => {
-    // tslint:disable-next-line: no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     Promise.all([getCurrentAgent(), getAgents(), getHandoffs(), getConfig()]).then(() => {
       setLoading(false)
     })
@@ -115,7 +146,7 @@ const App: FC<Props> = ({ bp }) => {
     <div className={style.app}>
       <div className={style.mainNav}>
         <AgentList loading={loading} agents={state.agents} />
-        <AgentProfile setOnline={setOnline} loading={loading} {...state.currentAgent} />
+        <AgentStatus setOnline={setOnline} loading={loading} {...state.currentAgent} />
       </div>
 
       <div className={style.mainContent}>
@@ -125,7 +156,6 @@ const App: FC<Props> = ({ bp }) => {
         {!state.selectedHandoffId && <EmptyConversation />}
         {state.selectedHandoffId && <ConversationContainer bp={bp} api={api} />}
       </div>
-      <script src="assets/modules/channel-web/inject.js"></script>
     </div>
   )
 }

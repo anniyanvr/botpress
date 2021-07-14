@@ -1,9 +1,8 @@
 import * as sdk from 'botpress/sdk'
 import { FlowView } from 'common/typings'
+import { GhostService } from 'core/bpfs'
 import { sanitizeFileName } from 'core/misc/utils'
 import _ from 'lodash'
-
-import { GhostService } from '..'
 
 import { NLUService } from './nlu-service'
 
@@ -18,7 +17,7 @@ export class IntentService {
 
   public async getIntents(botId: string): Promise<sdk.NLU.IntentDefinition[]> {
     const intentNames = await this.ghostService.forBot(botId).directoryListing(INTENTS_DIR, '*.json')
-    return Promise.mapSeries(intentNames, n => this.getIntent(botId, n))
+    return Promise.map(intentNames, n => this.getIntent(botId, n))
   }
 
   public async getIntent(botId: string, intentName: string): Promise<sdk.NLU.IntentDefinition> {

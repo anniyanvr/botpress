@@ -1,7 +1,6 @@
 import { Button, Icon, Position, Tooltip } from '@blueprintjs/core'
 import { Flow, FlowNode } from 'botpress/sdk'
 import { confirmDialog, lang, MoreOptions, MoreOptionsItems, toast, utils } from 'botpress/shared'
-import { getFlowLabel } from 'botpress/utils'
 import cx from 'classnames'
 import _uniqueId from 'lodash/uniqueId'
 import React, { FC, Fragment, useState } from 'react'
@@ -11,6 +10,7 @@ import Select from 'react-select'
 import { QnaItem } from '../../../backend/qna'
 import style from '../style.scss'
 import { NEW_QNA_PREFIX } from '../utils/qnaList.utils'
+import { getFlowLabel } from '../utils/studio-utils'
 
 import ContextSelector from './ContextSelector'
 import TextAreaList from './TextAreaList'
@@ -33,6 +33,7 @@ interface Props {
   childRef?: (ref: HTMLDivElement | null) => void
   updateQnA: (qnaItem: QnaItem) => void
   deleteQnA: () => void
+  convertToIntent: () => void
   toggleEnabledQnA: () => void
 }
 
@@ -74,6 +75,16 @@ const QnA: FC<Props> = props => {
     }
   }
 
+  const onConvertToIntent = async () => {
+    if (
+      await confirmDialog(lang.tr('module.qna.form.confirmConvertToIntent'), {
+        acceptLabel: lang.tr('convert')
+      })
+    ) {
+      props.convertToIntent()
+    }
+  }
+
   const moreOptionsItems: MoreOptionsItems[] = [
     {
       label: lang.tr(data.enabled ? 'module.qna.form.disableQuestion' : 'module.qna.form.enableQuestion'),
@@ -100,6 +111,12 @@ const QnA: FC<Props> = props => {
     label: lang.tr('module.qna.form.deleteQuestion'),
     type: 'delete',
     action: onDelete
+  })
+
+  moreOptionsItems.push({
+    label: lang.tr('module.qna.form.convertToIntent'),
+    type: 'convert',
+    action: onConvertToIntent
   })
 
   const getPlaceholder = (type: 'answer' | 'question', index: number): string => {
@@ -193,11 +210,10 @@ const QnA: FC<Props> = props => {
                 <span className={cx(style.tag)}>{lang.tr('module.qna.form.incomplete')}</span>
               </Tooltip>
             )}
-            {!expanded && (
-              <span className={style.tag}>{`${questions?.filter(q => q.trim()).length || 0} ${lang.tr(
-                'module.qna.form.q'
-              )} · ${answers?.filter(a => a.trim()).length || 0}  ${lang.tr('module.qna.form.a')}`}</span>
-            )}
+            <span className={style.tag}>
+              {`${questions?.filter(q => q.trim()).length || 0} ${lang.tr('module.qna.form.q')}
+               · ${answers?.filter(a => a.trim()).length || 0}  ${lang.tr('module.qna.form.a')}`}
+            </span>
           </div>
         </Button>
         <MoreOptions show={showOption} onToggle={() => setShowOption(!showOption)} items={moreOptionsItems} />

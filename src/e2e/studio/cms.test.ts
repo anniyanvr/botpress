@@ -1,35 +1,68 @@
-import { clickOn, fillField } from '../expectPuppeteer'
-import { CONFIRM_DIALOG, expectBotApiCallSuccess, gotoStudio, waitForBotApiResponse } from '../utils'
+import path from 'path'
 
-const getElementCount = async (): Promise<number> => {
+import { clickOn, uploadFile } from '../expectPuppeteer'
+import { expectBotApiCallSuccess, expectStudioApiCallSuccess, gotoStudio, loginIfNeeded } from '../utils'
+
+const getElementCount = async (all: boolean = false): Promise<number> => {
+  if (all) {
+    await page.select('.select-wrap.-pageSizeOptions select', '100')
+    await clickOn('#btn-filter-all')
+  }
+  await page.waitForFunction('document.querySelectorAll(".icon-edit").length > 0')
   return (await page.$$('.icon-edit')).length
 }
 
 describe('Studio - CMS', () => {
   beforeAll(async () => {
+    await loginIfNeeded()
     if (!page.url().includes('studio')) {
       await gotoStudio()
     }
   })
 
   it('Load CMS', async () => {
-    await clickOn('#bp-menu_Content')
-    await expectBotApiCallSuccess('content/elements', 'POST')
+    await clickOn('#bp-menu_content')
+    await expectStudioApiCallSuccess('cms/elements', 'POST')
   })
 
   it('Filter text elements', async () => {
-    await page.waitForFunction('document.querySelectorAll(".icon-edit").length > 0')
     const before = await getElementCount()
 
     await clickOn('#btn-filter-builtin_text')
-    await expectBotApiCallSuccess('content/builtin_text/elements', 'POST')
+    await expectStudioApiCallSuccess('cms/builtin_text/elements', 'POST')
     const after = await getElementCount()
-    await expect(after).toBeLessThan(before)
+    expect(after).toBeLessThan(before)
+  })
+
+  it('Create an image element', async () => {
+    const before = await getElementCount(true)
+    await page.hover('#btn-filter-builtin_image')
+    await clickOn('#btn-list-create-builtin_image')
+    await uploadFile('input[type="file"]', path.join(__dirname, '../assets/alien.png'))
+    await expectStudioApiCallSuccess('media', 'POST')
+    await clickOn('.DraftEditor-root')
+    await page.keyboard.type('I am a martian')
+    await clickOn('button[type="submit"]')
+    await expectStudioApiCallSuccess('cms/builtin_image/elements', 'POST')
+    const after = await getElementCount(true)
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('Create a file element', async () => {
+    const before = await getElementCount(true)
+    await page.hover('#btn-filter-builtin_file')
+    await clickOn('#btn-list-create-builtin_file')
+    await uploadFile('input[type="file"]', path.join(__dirname, '../assets/README.pdf'))
+    await expectStudioApiCallSuccess('media', 'POST')
+    await clickOn('.style__textarea___2P8hT')
+    await page.keyboard.type('Botpress README')
+    await clickOn('button[type="submit"]')
+    await expectStudioApiCallSuccess('cms/builtin_file/elements', 'POST')
+    const after = await getElementCount(true)
+    expect(after).toBeGreaterThan(before)
   })
 
   // it('Create text element', async () => {
-  //   const before = await getElementCount()
-  //   await clickOn('#btn-list-create-builtin_text')
 
   //   await page.keyboard.press('Tab')
   //   await page.keyboard.type('hey!')

@@ -1,16 +1,16 @@
-import { Collapsible, lang } from 'botpress/shared'
+import { Collapsible, EmptyState, lang } from 'botpress/shared'
 import _ from 'lodash'
 import React, { FC, Fragment, useContext, useState } from 'react'
 
 import { IHandoff } from '../../../../types'
-import { ApiType } from '../../Api'
+import { HitlClient } from '../../../client'
 import { Context } from '../Store'
 
 import Comment from './Comment'
 import CommentForm from './CommentForm'
 
 interface Props {
-  api: ApiType
+  api: HitlClient
   handoff: IHandoff
 }
 
@@ -36,11 +36,13 @@ export const Comments: FC<Props> = ({ handoff, api }) => {
         name={lang.tr('module.hitlnext.comments.heading')}
         ownProps={{ transitionDuration: 10 }}
       >
-        {comments.map(comment => {
-          return <Comment key={comment.id} {...comment}></Comment>
-        })}
+        {_.isEmpty(comments) && <EmptyState text={lang.tr('module.hitlnext.comments.empty')} />}
+        {!_.isEmpty(comments) &&
+          comments.map(comment => {
+            return <Comment key={comment.id} {...comment}></Comment>
+          })}
+        <CommentForm onSubmit={createComment}></CommentForm>
       </Collapsible>
-      <CommentForm onSubmit={createComment}></CommentForm>
     </Fragment>
   )
 }

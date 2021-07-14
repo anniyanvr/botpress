@@ -9,29 +9,42 @@ import tmp from 'tmp'
 export const MODELS_DIR = './models'
 const MAX_MODELS_TO_KEEP = 2
 
+interface ModelId {
+  specificationHash: string // represents the nlu engine that was used to train the model
+  contentHash: string // represents the intent and entity definitions the model was trained with
+  seed: number // number to seed the random number generators used during nlu training
+  languageCode: string // language of the model
+}
+
+interface Model {
+  id: ModelId
+  startedAt: Date
+  finishedAt: Date
+  data: {
+    input: string
+    output: string
+  }
+}
+
 function makeFileName(hash: string, lang: string): string {
   return `${hash}.${lang}.model`
 }
 
-export async function pruneModels(ghost: sdk.ScopedGhostService, languageCode: string): Promise<void | void[]> {
+async function pruneModels(ghost: sdk.ScopedGhostService, languageCode: string): Promise<void | void[]> {
   const models = await listModelsForLang(ghost, languageCode)
   if (models.length > MAX_MODELS_TO_KEEP) {
     return Promise.map(models.slice(MAX_MODELS_TO_KEEP), file => ghost.deleteFile(MODELS_DIR, file))
   }
 }
 
-export async function listModelsForLang(ghost: sdk.ScopedGhostService, languageCode: string): Promise<string[]> {
+async function listModelsForLang(ghost: sdk.ScopedGhostService, languageCode: string): Promise<string[]> {
   const endingPattern = makeFileName('*', languageCode)
   return ghost.directoryListing(MODELS_DIR, endingPattern, undefined, undefined, {
     sortOrder: { column: 'modifiedOn', desc: true }
   })
 }
 
-export async function getModel(
-  ghost: sdk.ScopedGhostService,
-  hash: string,
-  lang: string
-): Promise<sdk.NLU.Model | undefined> {
+async function getModel(ghost: sdk.ScopedGhostService, hash: string, lang: string): Promise<Model | undefined> {
   const fname = makeFileName(hash, lang)
   if (!(await ghost.fileExists(MODELS_DIR, fname))) {
     return
@@ -56,21 +69,9 @@ export async function getModel(
   }
 }
 
-export async function getLatestModel(ghost: sdk.ScopedGhostService, lang: string): Promise<sdk.NLU.Model | undefined> {
-  const availableModels = await listModelsForLang(ghost, lang)
-  if (availableModels.length === 0) {
-    return
-  }
-  return getModel(ghost, availableModels[0].split('.')[0], lang)
-}
-
-export async function saveModel(
-  ghost: sdk.ScopedGhostService,
-  model: sdk.NLU.Model,
-  hash: string
-): Promise<void | void[]> {
+async function saveModel(ghost: sdk.ScopedGhostService, model: Model, hash: string): Promise<void | void[]> {
   const serialized = JSON.stringify(model)
-  const modelName = makeFileName(hash, model.languageCode)
+  const modelName = makeFileName(hash, model.id.languageCode)
   const tmpDir = tmp.dirSync({ unsafeCleanup: true })
   const tmpFileName = path.join(tmpDir.name, 'model')
   await fse.writeFile(tmpFileName, serialized)
@@ -88,7 +89,7 @@ export async function saveModel(
   const buffer = await fse.readFile(archiveName)
   await ghost.upsertFile(MODELS_DIR, modelName, buffer)
   tmpDir.removeCallback()
-  return pruneModels(ghost, model.languageCode)
+  return pruneModels(ghost, model.id.languageCode)
 }
 
 const migration: sdk.ModuleMigration = {
@@ -130,6 +131,14 @@ const migration: sdk.ModuleMigration = {
     return {
       success: true,
       message: hasChanged ? 'Model compression completed successfully' : 'Nothing to compress, skipping...'
+    }
+  },
+
+  down: async ({ bp }: sdk.ModuleMigrationOpts): Promise<sdk.MigrationResult> => {
+    bp.logger.warn(`No down migration written for ${path.basename(__filename)}`)
+    return {
+      success: true,
+      message: 'No down migration written.'
     }
   }
 }

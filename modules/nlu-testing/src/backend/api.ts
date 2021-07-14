@@ -108,7 +108,7 @@ export default async (bp: typeof sdk) => {
       res.send(result)
     } catch (err) {
       bp.logger.warn('could not get response from converse api', err)
-      res.send(400)
+      res.sendStatus(400)
     }
   })
 
@@ -267,7 +267,7 @@ function conditionMatch(nlu: sdk.IO.EventUnderstanding, [key, matcher, expected]
       expected
     }
   } else if (key === 'context') {
-    // tslint:disable-next-line
+    // eslint-disable-next-line
     let [received, ctxPred] = _.chain(nlu.predictions)
       .toPairs()
       .maxBy('1.confidence')

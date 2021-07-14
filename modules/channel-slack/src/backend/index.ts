@@ -1,7 +1,5 @@
 import * as sdk from 'botpress/sdk'
-
 import { Config } from '../config'
-
 import { setupMiddleware, SlackClient } from './client'
 import { Clients } from './typings'
 
@@ -48,7 +46,6 @@ const entryPoint: sdk.ModuleEntryPoint = {
   onBotUnmount,
   definition: {
     name: 'channel-slack',
-    menuIcon: 'none',
     menuText: 'Channel Slack',
     noInterface: true,
     fullName: 'Slack',

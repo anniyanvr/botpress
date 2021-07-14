@@ -1,4 +1,5 @@
 import classnames from 'classnames'
+import debounce from 'lodash/debounce'
 import set from 'lodash/set'
 import { observe } from 'mobx'
 import { inject, observer } from 'mobx-react'
@@ -22,10 +23,7 @@ class Web extends React.Component<MainProps> {
   private socket: BpSocket
   private parentClass: string
   private hasBeenInitialized: boolean = false
-
-  state = {
-    played: false
-  }
+  private audio: HTMLAudioElement
 
   constructor(props) {
     super(props)
@@ -35,6 +33,7 @@ class Web extends React.Component<MainProps> {
   }
 
   async componentDidMount() {
+    this.audio = new Audio(`${window.ROOT_PATH}/assets/modules/channel-web/notification.mp3`)
     this.props.store.setIntlProvider(this.props.intl)
     window.store = this.props.store
 
@@ -62,7 +61,7 @@ class Web extends React.Component<MainProps> {
   }
 
   componentDidUpdate() {
-    // tslint:disable-next-line: no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.initializeIfChatDisplayed()
   }
 
@@ -111,8 +110,15 @@ class Web extends React.Component<MainProps> {
   }
 
   extractConfig() {
+    const decodeIfRequired = (options: string) => {
+      try {
+        return decodeURIComponent(options)
+      } catch {
+        return options
+      }
+    }
     const { options, ref } = queryString.parse(location.search)
-    const { config } = JSON.parse(decodeURIComponent(options || '{}'))
+    const { config } = JSON.parse(decodeIfRequired(options || '{}'))
 
     const userConfig = Object.assign({}, constants.DEFAULT_CONFIG, config)
     userConfig.reference = config.ref || ref
@@ -124,6 +130,7 @@ class Web extends React.Component<MainProps> {
 
   async initializeSocket() {
     this.socket = new BpSocket(this.props.bp, this.config)
+    this.socket.onClear = this.handleClearMessages
     this.socket.onMessage = this.handleNewMessage
     this.socket.onTyping = this.handleTyping
     this.socket.onData = this.handleDataMessage
@@ -170,6 +177,12 @@ class Web extends React.Component<MainProps> {
     })
   }
 
+  isCurrentConversation = (event: Message) => {
+    return (
+      !this.props.config?.conversationId || Number(this.props.config.conversationId) === Number(event.conversationId)
+    )
+  }
+
   handleIframeApi = async ({ data: { action, payload } }) => {
     if (action === 'configure') {
       this.props.updateConfig(Object.assign({}, constants.DEFAULT_CONFIG, payload))
@@ -192,6 +205,8 @@ class Web extends React.Component<MainProps> {
       } else if (type === 'message') {
         trackMessage('sent')
         await this.props.sendMessage(text)
+      } else if (type === 'loadConversation') {
+        this.props.store.fetchConversation(payload.conversationId)
       } else if (type === 'toggleBotInfo') {
         this.props.toggleBotInfo()
       } else {
@@ -200,13 +215,19 @@ class Web extends React.Component<MainProps> {
     }
   }
 
-  handleNewMessage = async event => {
+  handleClearMessages = (event: Message) => {
+    if (this.isCurrentConversation(event)) {
+      this.props.clearMessages()
+    }
+  }
+
+  handleNewMessage = async (event: Message) => {
     if (event.payload?.type === 'visit' || event.message_type === 'visit') {
       // don't do anything, it's the system message
       return
     }
 
-    if (this.props.config.conversationId && Number(this.props.config.conversationId) !== Number(event.conversationId)) {
+    if (!this.isCurrentConversation(event)) {
       // don't do anything, it's a message from another conversation
       return
     }
@@ -224,7 +245,7 @@ class Web extends React.Component<MainProps> {
   }
 
   handleTyping = async (event: Message) => {
-    if (this.props.config.conversationId && Number(this.props.config.conversationId) !== Number(event.conversationId)) {
+    if (!this.isCurrentConversation(event)) {
       // don't do anything, it's a message from another conversation
       return
     }
@@ -245,20 +266,19 @@ class Web extends React.Component<MainProps> {
     this.props.updateBotUILanguage(language)
   }
 
-  async playSound() {
-    if (this.state.played) {
+  playSound = debounce(async () => {
+    // Preference for config object
+    const disableNotificationSound =
+      this.config.disableNotificationSound === undefined
+        ? this.props.config.disableNotificationSound
+        : this.config.disableNotificationSound
+
+    if (disableNotificationSound || this.audio.readyState < 2) {
       return
     }
 
-    const audio = new Audio(`${window.ROOT_PATH}/assets/modules/channel-web/notification.mp3`)
-    await audio.play()
-
-    this.setState({ played: true })
-
-    setTimeout(() => {
-      this.setState({ played: false })
-    }, constants.MIN_TIME_BETWEEN_SOUNDS)
-  }
+    await this.audio.play()
+  }, constants.MIN_TIME_BETWEEN_SOUNDS)
 
   isLazySocket() {
     if (this.config.lazySocket !== undefined) {
@@ -345,6 +365,7 @@ export default inject(({ store }: { store: RootStore }) => ({
   updateConfig: store.updateConfig,
   mergeConfig: store.mergeConfig,
   addEventToConversation: store.addEventToConversation,
+  clearMessages: store.clearMessages,
   setUserId: store.setUserId,
   updateTyping: store.updateTyping,
   sendMessage: store.sendMessage,
@@ -394,6 +415,7 @@ type MainProps = { store: RootStore } & Pick<
   | 'hasUnreadMessages'
   | 'showWidgetButton'
   | 'addEventToConversation'
+  | 'clearMessages'
   | 'updateConfig'
   | 'mergeConfig'
   | 'isWebchatReady'

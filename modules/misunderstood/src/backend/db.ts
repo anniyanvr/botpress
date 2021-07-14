@@ -5,6 +5,7 @@ import moment from 'moment'
 
 import {
   DbFlaggedEvent,
+  FilteringOptions,
   FlaggedEvent,
   FLAGGED_MESSAGE_STATUS,
   FLAGGED_MESSAGE_STATUSES,
@@ -15,7 +16,7 @@ import {
 
 import applyChanges from './applyChanges'
 
-const TABLE_NAME = 'misunderstood'
+export const TABLE_NAME = 'misunderstood'
 const EVENTS_TABLE_NAME = 'events'
 
 export default class Db {
@@ -43,10 +44,28 @@ export default class Db {
   }
 
   async addEvent(event: FlaggedEvent) {
-    await this.knex(TABLE_NAME).insert(event)
+    const lookup = { botId: event.botId, language: event.language, preview: event.preview }
+    const treatedEvents = await this.knex(TABLE_NAME)
+      .count({ count: 'id' })
+      .where(lookup)
+      .andWhereNot({ status: FLAGGED_MESSAGE_STATUS.new })
+
+    if (treatedEvents.length > 0 && treatedEvents[0].count > 0) {
+      this.bp.logger.info(
+        `Not inserting event with properies ${JSON.stringify(lookup)} as it has already been treated before`
+      )
+    } else {
+      await this.knex(TABLE_NAME).insert(event)
+    }
   }
 
-  async updateStatus(botId: string, id: string, status: FLAGGED_MESSAGE_STATUS, resolutionData?: ResolutionData) {
+  async deleteAll(botId: string, status: FLAGGED_MESSAGE_STATUS) {
+    await this.knex(TABLE_NAME)
+      .where({ botId, status })
+      .del()
+  }
+
+  async updateStatuses(botId: string, ids: string[], status: FLAGGED_MESSAGE_STATUS, resolutionData?: ResolutionData) {
     if (status !== FLAGGED_MESSAGE_STATUS.pending) {
       resolutionData = { resolutionType: null, resolution: null, resolutionParams: null }
     } else {
@@ -54,7 +73,10 @@ export default class Db {
     }
 
     await this.knex(TABLE_NAME)
-      .where({ botId, id })
+      .where({ botId })
+      .andWhere(function() {
+        this.whereIn('id', ids)
+      })
       .update({ status, ...resolutionData, updatedAt: this.knex.fn.now() })
   }
 
@@ -62,17 +84,13 @@ export default class Db {
     botId: string,
     language: string,
     status: FLAGGED_MESSAGE_STATUS,
-    options?: { startDate: Date; endDate: Date }
+    options?: FilteringOptions
   ): Promise<DbFlaggedEvent[]> {
-    const { startDate, endDate } = options || {}
-
     const query = this.knex(TABLE_NAME)
       .select('*')
       .where({ botId, language, status })
 
-    if (startDate && endDate) {
-      query.andWhere(this.knex.date.isBetween('updatedAt', startDate, endDate))
-    }
+    this.filterQuery(query, options)
 
     const data: DbFlaggedEvent[] = await query.orderBy('updatedAt', 'desc')
 
@@ -85,17 +103,13 @@ export default class Db {
     }))
   }
 
-  async countEvents(botId: string, language: string, options?: { startDate: Date; endDate: Date }) {
-    const { startDate, endDate } = options || {}
-
+  async countEvents(botId: string, language: string, options?: FilteringOptions) {
     const query = this.knex(TABLE_NAME)
       .where({ botId, language })
       .select('status')
       .count({ count: 'id' })
 
-    if (startDate && endDate) {
-      query.andWhere(this.knex.date.isBetween('updatedAt', startDate, endDate))
-    }
+    this.filterQuery(query, options)
 
     const data: { status: string; count: number }[] = await query.groupBy('status')
 
@@ -177,5 +191,19 @@ export default class Db {
 
   applyChanges(botId: string) {
     return applyChanges(this.bp, botId, TABLE_NAME)
+  }
+
+  filterQuery(query, options?: FilteringOptions) {
+    const { startDate, endDate, reason } = options || {}
+
+    if (startDate && endDate) {
+      query.andWhere(this.knex.date.isBetween('updatedAt', startDate, endDate))
+    }
+
+    if (reason === 'thumbs_down') {
+      query.andWhere({ reason })
+    } else if (reason && reason !== 'thumbs_down') {
+      query.andWhereNot('reason', 'thumbs_down')
+    }
   }
 }

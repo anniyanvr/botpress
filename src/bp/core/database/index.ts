@@ -6,9 +6,9 @@ import Knex from 'knex'
 import _ from 'lodash'
 import path from 'path'
 
+import AllTables from './database-tables'
 import { patchKnex } from './helpers'
 import { Table } from './interfaces'
-import AllTables from './tables'
 
 export type DatabaseType = 'postgres' | 'sqlite'
 
@@ -86,10 +86,12 @@ export default class Database {
     }
 
     if (databaseType === 'postgres') {
+      const searchPath = (process.env.DATABASE_PG_SEARCH_PATH || 'public').split(',')
       Object.assign(config, {
         client: 'pg',
         connection: databaseUrl,
-        pool: poolOptions
+        pool: poolOptions,
+        searchPath
       })
     } else {
       const dbLocation = databaseUrl ? databaseUrl : `${process.PROJECT_LOCATION}/data/storage/core.sqlite`

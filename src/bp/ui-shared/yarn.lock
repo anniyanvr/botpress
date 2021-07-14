@@ -9,6 +9,23 @@
   dependencies:
     regenerator-runtime "^0.13.4"
 
+"@blueprintjs/core@^3.23.0":
+  version "3.36.0"
+  resolved "https://registry.yarnpkg.com/@blueprintjs/core/-/core-3.36.0.tgz#0a271092050c17b84f29426594708180a1b5401a"
+  integrity sha512-7VUyF+qWelDysajK0Xowlou+iqbGAFfGaM3znpmm7OEEIli5XRWjG9rhNuEk3sP7zbdOJpyqh5PAPDQvm5Sxmg==
+  dependencies:
+    "@blueprintjs/icons" "^3.23.0"
+    "@types/dom4" "^2.0.1"
+    classnames "^2.2"
+    dom4 "^2.1.5"
+    normalize.css "^8.0.1"
+    popper.js "^1.16.1"
+    react-lifecycles-compat "^3.0.4"
+    react-popper "^1.3.7"
+    react-transition-group "^2.9.0"
+    resize-observer-polyfill "^1.5.1"
+    tslib "~1.13.0"
+
 "@blueprintjs/core@^3.23.1", "@blueprintjs/core@^3.32.1":
   version "3.32.1"
   resolved "https://registry.yarnpkg.com/@blueprintjs/core/-/core-3.32.1.tgz#16a2034727b2a71e492538193e31d38cd40fc61c"
@@ -26,10 +43,28 @@
     resize-observer-polyfill "^1.5.1"
     tslib "~1.13.0"
 
+"@blueprintjs/datetime@3.15.2":
+  version "3.15.2"
+  resolved "https://registry.yarnpkg.com/@blueprintjs/datetime/-/datetime-3.15.2.tgz#c0beffa287cdad7d7521db23ef2918491156044b"
+  integrity sha512-FQw1BqbO9RBKzLWiXHkSVFxyGFRXHaugG5ST4go+p2IibrxuRDjD6YvrFXo+FLEzi+MsftMo6FkPNm2xApfmHw==
+  dependencies:
+    "@blueprintjs/core" "^3.23.0"
+    classnames "^2.2"
+    react-day-picker "7.3.2"
+    tslib "~1.9.0"
+
 "@blueprintjs/icons@^3.21.0":
   version "3.21.0"
   resolved "https://registry.yarnpkg.com/@blueprintjs/icons/-/icons-3.21.0.tgz#1cab6d2de069674fd4909ca10fefa94d3563ea5f"
   integrity sha512-5vszPkRNaCctDRp2wDLJLTzqQ1Qlp8gr2BqkjPcPBDVMGlYCdM1/LaBZazMgj+/52n7Z+kJzQ5rRNv9DX5LJoA==
+  dependencies:
+    classnames "^2.2"
+    tslib "~1.13.0"
+
+"@blueprintjs/icons@^3.23.0":
+  version "3.23.0"
+  resolved "https://registry.yarnpkg.com/@blueprintjs/icons/-/icons-3.23.0.tgz#4cfe0db4363971ac5d8a0a59590a6efc16115dc6"
+  integrity sha512-QOQ3P5bU1FiEwnMBl5Chn433ONSSTIMgC+zZJttyXV0m8R7D1bPBJJqIMuANXtRld/Fj+8IzoQ6jfaVUG16slA==
   dependencies:
     classnames "^2.2"
     tslib "~1.13.0"
@@ -2764,6 +2799,11 @@ js-base64@^2.1.8, js-base64@^2.1.9:
   resolved "https://registry.yarnpkg.com/js-base64/-/js-base64-2.6.4.tgz#f4e686c5de1ea1f867dbcad3d46d969428df98c4"
   integrity sha512-pZe//GGmwJndub7ZghVHz7vjb2LgC1m8B07Au3eYqeqv9emhESByMXxaEgkUkEqJe87oBbSniGYoQNIBklc7IQ==
 
+js-cookie@^2.2.1:
+  version "2.2.1"
+  resolved "https://registry.npmjs.org/js-cookie/-/js-cookie-2.2.1.tgz#69e106dc5d5806894562902aa5baec3744e9b2b8"
+  integrity sha512-HvdH2LzI/EAZcUwA8+0nKNtWHqS+ZmijLA30RwZA0bo7ToCckjK5MkGhjED9KoRcXO6BaGI3I9UIzSA1FKFPOQ==
+
 "js-tokens@^3.0.0 || ^4.0.0":
   version "4.0.0"
   resolved "https://registry.yarnpkg.com/js-tokens/-/js-tokens-4.0.0.tgz#19203fb59991df98e3a287050d4647cdeaf32499"
@@ -4136,7 +4176,7 @@ promise-inflight@^1.0.1:
   resolved "https://registry.yarnpkg.com/promise-inflight/-/promise-inflight-1.0.1.tgz#98472870bf228132fcbdd868129bad12c3c029e3"
   integrity sha1-mEcocL8igTL8vdhoEputEsPAKeM=
 
-prop-types@^15.5.10, prop-types@^15.5.8, prop-types@^15.6.0, prop-types@^15.6.1, prop-types@^15.6.2:
+prop-types@^15.5.10, prop-types@^15.5.4, prop-types@^15.5.8, prop-types@^15.6.0, prop-types@^15.6.1, prop-types@^15.6.2, prop-types@^15.7.2:
   version "15.7.2"
   resolved "https://registry.yarnpkg.com/prop-types/-/prop-types-15.7.2.tgz#52c41e75b8c87e72b9d9360e0206b99dcbffa6c5"
   integrity sha512-8QQikdH7//R2vurIJSutZ1smHYTcLpRWEOlHnzcWHmBYrOGUysKwSsrC89BCiFj3CbrfJ/nXFdJepOVrY1GCHQ==
@@ -4317,6 +4357,13 @@ react-copy-to-clipboard@^5.0.2:
     copy-to-clipboard "^3"
     prop-types "^15.5.8"
 
+react-day-picker@7.3.2:
+  version "7.3.2"
+  resolved "https://registry.yarnpkg.com/react-day-picker/-/react-day-picker-7.3.2.tgz#b9b9b0000ba53b2c9df9bccb79664862aba6b60a"
+  integrity sha512-mij2j2Un/v2V2ow+hf/hFBMdl6Eis/C/YhBtlI6Xpbvh3Q6WMix78zEkCdw6i9GldafOrpnupWKofv/h5oSI4g==
+  dependencies:
+    prop-types "^15.6.2"
+
 react-dom@^16.8.6:
   version "16.13.1"
   resolved "https://registry.yarnpkg.com/react-dom/-/react-dom-16.13.1.tgz#c1bd37331a0486c078ee54c4740720993b2e0e7f"
@@ -4420,6 +4467,22 @@ react-router@4.3.1, react-router@^4.3.1:
     path-to-regexp "^1.7.0"
     prop-types "^15.6.1"
     warning "^4.0.1"
+
+react-split-pane@^0.1.89:
+  version "0.1.92"
+  resolved "https://registry.npmjs.org/react-split-pane/-/react-split-pane-0.1.92.tgz#68242f72138aed95dd5910eeb9d99822c4fc3a41"
+  integrity sha512-GfXP1xSzLMcLJI5BM36Vh7GgZBpy+U/X0no+VM3fxayv+p1Jly5HpMofZJraeaMl73b3hvlr+N9zJKvLB/uz9w==
+  dependencies:
+    prop-types "^15.7.2"
+    react-lifecycles-compat "^3.0.4"
+    react-style-proptype "^3.2.2"
+
+react-style-proptype@^3.2.2:
+  version "3.2.2"
+  resolved "https://registry.npmjs.org/react-style-proptype/-/react-style-proptype-3.2.2.tgz#d8e998e62ce79ec35b087252b90f19f1c33968a0"
+  integrity sha512-ywYLSjNkxKHiZOqNlso9PZByNEY+FTyh3C+7uuziK0xFXu9xzdyfHwg4S9iyiRRoPCR4k2LqaBBsWVmSBwCWYQ==
+  dependencies:
+    prop-types "^15.5.4"
 
 react-themeable@^1.1.0:
   version "1.1.0"
@@ -5379,6 +5442,11 @@ tslib@^1.9.0, tslib@~1.13.0:
   version "1.13.0"
   resolved "https://registry.yarnpkg.com/tslib/-/tslib-1.13.0.tgz#c881e13cc7015894ed914862d276436fa9a47043"
   integrity sha512-i/6DQjL8Xf3be4K/E6Wgpekn5Qasl1usyw++dAA35Ue5orEn65VIxOA+YvNNl9HV3qv70T7CNwjODHZrLwvd1Q==
+
+tslib@~1.9.0:
+  version "1.9.3"
+  resolved "https://registry.yarnpkg.com/tslib/-/tslib-1.9.3.tgz#d7e4dd79245d85428c4d7e4822a79917954ca286"
+  integrity sha512-4krF8scpejhaOgqzBEcGM7yDIEfi0/8+8zDRZhNZZ2kjmHJ4hv3zCbQWxoJGz1iw5U0Jl0nma13xzHXcncMavQ==
 
 tty-browserify@0.0.0:
   version "0.0.0"

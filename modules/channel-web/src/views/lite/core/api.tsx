@@ -1,20 +1,22 @@
+import { AxiosInstance, AxiosRequestConfig } from 'axios'
 import { EventFeedback } from 'lite/typings'
 import get from 'lodash/get'
+import uuid from 'uuid'
 
 export default class WebchatApi {
-  private axios
-  private axiosConfig
+  private axios: AxiosInstance
+  private axiosConfig: AxiosRequestConfig
   private userId: string
   private botId: string
 
-  constructor(userId: string, axiosInstance) {
+  constructor(userId: string, axiosInstance: AxiosInstance) {
     this.userId = userId
     this.axios = axiosInstance
     this.axios.interceptors.request.use(
       config => {
         if (!config.url.includes('/botInfo')) {
           const prefix = config.url.indexOf('?') > 0 ? '&' : '?'
-          config.url += prefix + '__ts=' + new Date().getTime()
+          config.url = `${config.url}${prefix}__ts=${new Date().getTime()}`
         }
         return config
       },
@@ -23,7 +25,13 @@ export default class WebchatApi {
       }
     )
 
-    this.axiosConfig = this.updateAxiosConfig()
+    this.updateAxiosConfig()
+  }
+
+  private get baseUserPayload() {
+    return {
+      webSessionId: window.__BP_VISITOR_SOCKET_ID
+    }
   }
 
   updateUserId(userId: string) {
@@ -58,7 +66,7 @@ export default class WebchatApi {
 
   async fetchPreferences() {
     try {
-      const { data } = await this.axios.get(`/preferences/${this.userId}`, this.axiosConfig)
+      const { data } = await this.axios.post('/preferences/get', this.baseUserPayload, this.axiosConfig)
       return data
     } catch (err) {
       console.error('Error while fetching preferences', err)
@@ -67,7 +75,7 @@ export default class WebchatApi {
 
   async updateUserPreferredLanguage(language: string) {
     try {
-      await this.axios.post(`/preferences/${this.userId}`, { language }, this.axiosConfig)
+      await this.axios.post('/preferences', { ...this.baseUserPayload, language }, this.axiosConfig)
     } catch (err) {
       console.error('Error in updating user preferred language', err)
     }
@@ -75,61 +83,79 @@ export default class WebchatApi {
 
   async fetchConversations() {
     try {
-      const { data } = await this.axios.get(`/conversations/${this.userId}`, this.axiosConfig)
+      const { data } = await this.axios.post('/conversations/list', this.baseUserPayload, this.axiosConfig)
       return data
     } catch (err) {
       console.error('Error while fetching convos', err)
     }
   }
 
-  async fetchConversation(convoId: number) {
+  async fetchConversation(conversationId: number) {
     try {
-      const { data } = await this.axios.get(`/conversations/${this.userId}/${convoId}`, this.axiosConfig)
+      const { data } = await this.axios.post(
+        '/conversations/get',
+        { ...this.baseUserPayload, conversationId },
+        this.axiosConfig
+      )
       return data
     } catch (err) {
       await this.handleApiError(err)
     }
   }
 
-  async resetSession(convoId: number) {
+  async resetSession(conversationId: number): Promise<void> {
     try {
-      this.axios.post(`/conversations/${this.userId}/${convoId}/reset`, {}, this.axiosConfig)
+      await this.axios.post('/conversations/reset', { ...this.baseUserPayload, conversationId }, this.axiosConfig)
     } catch (err) {
-      console.error('Error while resetting convo', err)
+      console.error('Error while resetting conversation', err)
     }
   }
 
   async createConversation(): Promise<number> {
     try {
-      const { data } = await this.axios.post(`/conversations/${this.userId}/new`, {}, this.axiosConfig)
+      const { data } = await this.axios.post('/conversations/new', this.baseUserPayload, this.axiosConfig)
       return data.convoId
     } catch (err) {
       console.error('Error in create conversation', err)
     }
   }
 
-  async downloadConversation(convoId: number): Promise<any> {
+  async downloadConversation(conversationId: number): Promise<any> {
     try {
-      const { data } = await this.axios.get(`/conversations/${this.userId}/${convoId}/download/txt`, this.axiosConfig)
+      const { data } = await this.axios.post(
+        '/conversations/download/txt',
+        { ...this.baseUserPayload, conversationId },
+        this.axiosConfig
+      )
       return { name: data.name, txt: data.txt }
     } catch (err) {
-      console.error('Error in download convo', err)
+      console.error('Error in download conversation', err)
     }
   }
 
-  async sendEvent(data: any, convoId: number): Promise<void> {
+  async sendEvent(payload: any, conversationId: number): Promise<void> {
     try {
-      const config = { params: { conversationId: convoId }, ...this.axiosConfig }
-      return this.axios.post(`/events/${this.userId}`, data, config)
+      return this.axios.post('/events', { ...this.baseUserPayload, conversationId, payload }, this.axiosConfig)
     } catch (err) {
       await this.handleApiError(err)
     }
   }
 
-  async sendMessage(data: any, convoId: number): Promise<void> {
+  async sendMessage(payload: any, conversationId: number): Promise<void> {
     try {
-      const config = { params: { conversationId: convoId }, ...this.axiosConfig }
-      return this.axios.post(`/messages/${this.userId}`, data, config)
+      return this.axios.post('/messages', { ...this.baseUserPayload, conversationId, payload }, this.axiosConfig)
+    } catch (err) {
+      await this.handleApiError(err)
+    }
+  }
+
+  async deleteMessages(conversationId: number) {
+    try {
+      await this.axios.post(
+        '/conversations/messages/delete',
+        { ...this.baseUserPayload, conversationId },
+        this.axiosConfig
+      )
     } catch (err) {
       await this.handleApiError(err)
     }
@@ -152,18 +178,38 @@ export default class WebchatApi {
     }
   }
 
-  async uploadFile(data: any, convoId: number): Promise<void> {
+  async uploadFile(file: File, conversationId: number): Promise<void> {
     try {
-      const config = { params: { conversationId: convoId }, ...this.axiosConfig }
-      return this.axios.post(`/messages/${this.userId}/files`, data, config)
+      const data = new FormData()
+      data.append('file', file)
+      data.append('webSessionId', this.baseUserPayload.webSessionId)
+      data.append('conversationId', conversationId.toString())
+
+      return this.axios.post('/messages/files', data, this.axiosConfig)
     } catch (err) {
       await this.handleApiError(err)
     }
   }
 
-  async setReference(reference: string, convoId: number): Promise<void> {
+  async sendVoiceMessage(voice: Buffer, ext: string, conversationId: number): Promise<void> {
     try {
-      return this.axios.post(`/conversations/${this.userId}/${convoId}/reference/${reference}`, {}, this.axiosConfig)
+      const audio = {
+        buffer: voice.toString('base64'),
+        title: `${uuid.v4()}.${ext}`
+      }
+      return this.axios.post('/messages/voice', { ...this.baseUserPayload, conversationId, audio }, this.axiosConfig)
+    } catch (err) {
+      await this.handleApiError(err)
+    }
+  }
+
+  async setReference(reference: string, conversationId: number): Promise<void> {
+    try {
+      return this.axios.post(
+        '/conversations/reference',
+        { ...this.baseUserPayload, conversationId, reference },
+        this.axiosConfig
+      )
     } catch (err) {
       await this.handleApiError(err)
     }

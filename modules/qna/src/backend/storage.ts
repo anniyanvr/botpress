@@ -1,6 +1,6 @@
 import axios from 'axios'
 import * as sdk from 'botpress/sdk'
-import { Paging } from 'botpress/sdk'
+
 import _ from 'lodash'
 import nanoid from 'nanoid/generate'
 
@@ -75,6 +75,14 @@ export default class Storage {
   }
 
   private async createNLUIntentFromQnaItem(qnaItem: QnaItem, create: boolean): Promise<void> {
+    return this._makeIntent(qnaItem, getIntentId(qnaItem.id))
+  }
+
+  private async _convertQnaToNLUIntent(qnaItem: QnaItem): Promise<void> {
+    return this._makeIntent(qnaItem, qnaItem.id)
+  }
+
+  private async _makeIntent(qnaItem: QnaItem, intentName: string): Promise<void> {
     const axiosConfig = await this.getAxiosConfig()
     const utterances = {}
     for (const lang in qnaItem.data.questions) {
@@ -82,7 +90,7 @@ export default class Storage {
     }
 
     const intent = {
-      name: getIntentId(qnaItem.id),
+      name: intentName,
       entities: [],
       contexts: qnaItem.data.contexts,
       utterances
@@ -93,8 +101,10 @@ export default class Storage {
 
   async update(data: QnaEntry, id: string): Promise<string> {
     await this.checkForDuplicatedQuestions(data, id)
-
-    id = id || makeID(data)
+    if (!id) {
+      // Updates only no inserts
+      return
+    }
     const item: QnaItem = { id, data }
 
     if (data.enabled) {
@@ -119,9 +129,20 @@ export default class Storage {
     }
   }
 
-  async insert(qna: QnaEntry | QnaEntry[]): Promise<string[]> {
-    const ids = await Promise.mapSeries(_.isArray(qna) ? qna : [qna], async (data, i) => {
-      const id = makeID(data)
+  async upsertItem(item: QnaItem | QnaItem[]): Promise<string[]> {
+    const items = _.isArray(item) ? item : [item]
+    const qnaMap: { [key: string]: QnaEntry } = {}
+
+    items.forEach(async item => {
+      if (item.id in qnaMap) {
+        this.bp.logger.warn(`Duplicate IDs found in input while batch importing: ${item.id}`)
+        qnaMap[makeID(item.data)] = item.data
+      } else {
+        qnaMap[item.id] = item.data
+      }
+    })
+
+    return Promise.map(Object.entries(qnaMap), async ([id, data]) => {
       await this.checkForDuplicatedQuestions(data, id)
       const item: QnaItem = { id, data }
       if (data.enabled) {
@@ -131,11 +152,14 @@ export default class Storage {
       await this.bp.ghost
         .forBot(this.botId)
         .upsertFile(this.config.qnaDir, `${id}.json`, JSON.stringify(item, undefined, 2))
-
       return id
     })
+  }
 
-    return ids
+  async insert(data: QnaEntry): Promise<string> {
+    const id = makeID(data)
+    await this.upsertItem({ id, data })
+    return id
   }
 
   private async checkForDuplicatedQuestions(newItem: QnaEntry, editingQnaId?: string) {
@@ -175,7 +199,7 @@ export default class Storage {
     return this.migrate_11_2_to_11_3(data)
   }
 
-  async fetchQNAs(opts?: Paging) {
+  async fetchQNAs(opts?: sdk.Paging) {
     try {
       let questions = await this.bp.ghost.forBot(this.botId).directoryListing(this.config.qnaDir, '*.json')
       if (opts && opts.count) {
@@ -287,5 +311,11 @@ export default class Storage {
     }
 
     await Promise.all(ids.map(deletePromise))
+  }
+
+  async convert(qnaId: string) {
+    const item = await this.getQnaItem(qnaId)
+    await this._convertQnaToNLUIntent(item)
+    return this.delete(qnaId)
   }
 }

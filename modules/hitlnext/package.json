@@ -1,9 +1,9 @@
 {
   "name": "hitlnext",
-  "fullName": "HITL Next",
+  "fullName": "HITL-next",
   "version": "1.0.0",
   "status": "stable",
-  "description": "Human-in-the-loop",
+  "description": "Simple system to handoff tricky user conversations to your team of agents",
   "private": true,
   "main": "dist/backend/index.js",
   "scripts": {
@@ -14,14 +14,16 @@
   "author": "Botpress, Inc.",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@blueprintjs/core": "^3.31.0",
-    "axios": "^0.19.0",
+    "@blueprintjs/core": "^3.36.0",
+    "@webscopeio/react-textarea-autocomplete": "^4.7.2",
+    "axios": "^0.21.0",
     "bluebird": "^3.5",
     "classnames": "^2.2.6",
     "haikunator": "^2.1.2",
     "immer": "^8",
     "joi": "^17",
     "lodash": ">=4.17",
+    "lru-cache": "^6.0.0",
     "moment": "^2.24",
     "react-initial": "^1.0.12",
     "serialize-javascript": "^5.0.1",
@@ -29,6 +31,6 @@
   },
   "resolutions": {
     "fstream": ">=1.0.12",
-    "lodash": ">=4.17.19"
+    "lodash": ">=4.17.21"
   }
 }

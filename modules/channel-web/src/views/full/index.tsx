@@ -1,7 +1,7 @@
 import React from 'react'
 
-import Message from '../lite/components/messages/Message'
 import * as Keyboard from '../lite/components/Keyboard'
+import Message from '../lite/components/messages/Message'
 
 const INJECTION_ID = 'bp-channel-web-injection'
 const INJECTION_URL = 'assets/modules/channel-web/inject.js'
@@ -31,6 +31,7 @@ export class WebBotpressUIInjection extends React.Component {
         useSessionStorage: false,
         showPoweredBy: false,
         enableResetSessionShortcut: true,
+        enableConversationDeletion: true,
         containerWidth: EMULATOR_WIDTH,
         layoutWidth: EMULATOR_WIDTH,
         overrides: {

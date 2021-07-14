@@ -3,7 +3,7 @@ import { Dialog, ElementHandle, HttpMethod, MouseButtons, Page } from 'puppeteer
 
 import { bpConfig } from '../../jest-puppeteer.config'
 
-import { clickOn, expectMatchElement } from './expectPuppeteer'
+import { clickOn, expectMatchElement, fillField } from './expectPuppeteer'
 
 export const getPage = async (): Promise<Page> => {
   await page.setViewport(bpConfig.windowSize)
@@ -18,8 +18,18 @@ export const getPage = async (): Promise<Page> => {
   return page
 }
 
+export const loginIfNeeded = async () => {
+  if (page.url().includes('login')) {
+    await fillField('#email', bpConfig.email)
+    await fillField('#password', bpConfig.password)
+    await clickOn('#btn-signin')
+    return page.waitForNavigation()
+  }
+}
+
 export const gotoStudio = async (section?: string) => {
-  await gotoAndExpect(`${bpConfig.host}/studio/${bpConfig.botId}${section ? '/' + section : ''}`)
+  const resource = section ? `/${section}` : ''
+  await gotoAndExpect(`${bpConfig.host}/studio/${bpConfig.botId}${resource}`)
   return page.waitFor(200)
 }
 
@@ -29,7 +39,7 @@ export const gotoAndExpect = async (url: string, matchUrl?: string) => {
   await expect(page.url()).toMatch(matchUrl || url)
 }
 
-const getResponse = async (url: string, method?: HttpMethod) => {
+export const getResponse = async (url: string, method?: HttpMethod) => {
   return page.waitForResponse(res => {
     const resUrl = res.url()
     console.info(`url: ${url}, resUrl: ${resUrl}`)
@@ -37,18 +47,34 @@ const getResponse = async (url: string, method?: HttpMethod) => {
   })
 }
 
-export const expectCallSuccess = async (url: string, method?: HttpMethod): Promise<void> => {
+export const expectCallSuccess = async (url: string, method?: HttpMethod): Promise<any> => {
   const response = await getResponse(url, method)
   expect(response.status()).toBe(200)
+  return response.json()
 }
 
 export const expectAdminApiCallSuccess = async (endOfUrl: string, method?: HttpMethod): Promise<void> => {
-  const response = await getResponse(`${bpConfig.apiHost}/api/v1/admin/${endOfUrl}`, method)
+  const response = await getResponse(`${bpConfig.apiHost}/api/v2/admin/${endOfUrl}`, method)
+  expect(response.status()).toBe(200)
+}
+
+export const expectModuleApiCallSuccess = async (
+  module: string,
+  bot: string,
+  resource: string,
+  method?: HttpMethod
+): Promise<void> => {
+  const response = await getResponse(`${bpConfig.apiHost}/api/v1/bots/${bot}/mod/${module}/${resource}`, method)
   expect(response.status()).toBe(200)
 }
 
 export const expectBotApiCallSuccess = async (endOfUrl: string, method?: HttpMethod): Promise<void> => {
   const response = await getResponse(`${bpConfig.apiHost}/api/v1/bots/${bpConfig.botId}/${endOfUrl}`, method)
+  expect(response.status()).toBe(200)
+}
+
+export const expectStudioApiCallSuccess = async (endOfUrl: string, method?: HttpMethod): Promise<void> => {
+  const response = await getResponse(`${bpConfig.apiHost}/api/v1/studio/${bpConfig.botId}/${endOfUrl}`, method)
   expect(response.status()).toBe(200)
 }
 
@@ -80,11 +106,14 @@ export const getElementCenter = async (element: ElementHandle): Promise<{ x: num
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
 }
 
-export const triggerKeyboardShortcut = async (key: string, ctrlKey?: boolean) => {
-  if (ctrlKey) {
-    await page.keyboard.down('Control')
+export const triggerKeyboardShortcut = async (key: string, holdCtrl?: boolean) => {
+  //not supported yet by puppetter
+  // const ctrlKey = process.platform == 'darwin' ? 'Meta' : 'Control'
+  const ctrlKey = 'Control'
+  if (holdCtrl) {
+    await page.keyboard.down(ctrlKey)
     await page.keyboard.press(key)
-    await page.keyboard.up('Control')
+    await page.keyboard.up(ctrlKey)
   } else {
     await page.keyboard.press(key)
   }
@@ -96,7 +125,7 @@ export const clickOnTreeNode = async (searchText: string, button: MouseButtons =
 }
 
 export const closeToaster = async () => {
-  await clickOn(".recipe-toaster svg[data-icon='cross']")
+  await clickOn("svg[data-icon='cross']")
   await page.waitForFunction(() => {
     return document.querySelector('.bp3-overlay').childElementCount === 0
   })

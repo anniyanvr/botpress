@@ -1,4 +1,8 @@
+// @ts-nocheck
 import React from 'react'
+
+import HITLComposer from './HITLComposer'
+import { HandoffAssignedForAgent } from './HandoffAssigned'
 
 export class LiteView extends React.Component {
   render() {
@@ -6,4 +10,4 @@ export class LiteView extends React.Component {
   }
 }
 
-export { HandoffAssignedForAgent, HandoffAssignedForUser } from './HandoffAssigned'
+export { HITLComposer, HandoffAssignedForAgent }

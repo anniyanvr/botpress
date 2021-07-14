@@ -1,13 +1,13 @@
 import 'bluebird-global'
-// tslint:disable-next-line:ordered-imports
+// eslint-disable-next-line import/order
 import '../sdk/rewire'
-// tslint:disable-next-line:ordered-imports
+// eslint-disable-next-line import/order
 
 import { BotConfig } from 'botpress/sdk'
 
 import { Workspace } from 'common/typings'
-import { Db, Ghost } from 'core/app'
-import { getOrCreate as redisFactory } from 'core/services/redis'
+import { BotpressApp, createApp } from 'core/app/core-loader'
+import { getClientsList, getOrCreate as redisFactory, makeRedisKey } from 'core/distributed'
 import fse from 'fs-extra'
 import IORedis from 'ioredis'
 import _ from 'lodash'
@@ -19,6 +19,7 @@ import stripAnsi from 'strip-ansi'
 import yn from 'yn'
 import { startMonitor } from './monitor'
 import {
+  getToolVersion,
   printHeader,
   printObject,
   printRow,
@@ -82,6 +83,7 @@ const PASSWORD_REGEX = new RegExp(/(.*):(.*)@(.*)/)
 const REDIS_TEST_KEY = 'botpress_redis_test_key'
 const REDIS_TEST_VALUE = nanoid()
 
+let app: BotpressApp
 let redisClient: IORedis.Redis
 let includePasswords = false
 let botpressConfig = undefined
@@ -96,7 +98,7 @@ export const print = (text: string) => {
 }
 
 const printModulesConfig = async (botId?: string) => {
-  const ghost = botId ? Ghost.forBot(botId) : Ghost.global()
+  const ghost = botId ? app.ghost.forBot(botId) : app.ghost.global()
   const configs = await ghost.directoryListing('config/', '*.json')
 
   await Promise.mapSeries(configs, async file => {
@@ -105,10 +107,12 @@ const printModulesConfig = async (botId?: string) => {
   })
 }
 
-const printGeneralInfos = () => {
+const printGeneralInfos = async () => {
   printHeader('General')
   printRow('Botpress Version', process.BOTPRESS_VERSION)
   printRow('Node Version', process.version.substr(1))
+  printRow('NLU Version', await getToolVersion('nlu'))
+  printRow('Studio Version', await getToolVersion('studio'))
   printRow('Running Binary', process.pkg ? 'Yes' : 'No')
   printRow('Enterprise', process.IS_PRO_AVAILABLE ? (process.IS_PRO_ENABLED ? 'Enabled' : 'Available') : 'Unavailable')
   printRow('Hostname', os.hostname())
@@ -126,15 +130,15 @@ const testConnectivity = async () => {
   printHeader('Connectivity ')
 
   await wrapMethodCall('Connecting to Database', async () => {
-    await Db.initialize()
-    printRow('Database Type', Db.knex.isLite ? 'SQLite' : 'Postgres')
+    await app.database.initialize()
+    printRow('Database Type', app.database.knex.isLite ? 'SQLite' : 'Postgres')
 
-    if ((await Db.knex.raw('select 1+1 as result')) === undefined) {
+    if ((await app.database.knex.raw('select 1+1 as result')) === undefined) {
       throw new Error('Database error')
     }
 
     const useDbDriver = process.BPFS_STORAGE === 'database'
-    await Ghost.initialize(useDbDriver)
+    await app.ghost.initialize(useDbDriver)
   })
 
   if (process.env.CLUSTER_ENABLED && redisFactory) {
@@ -147,9 +151,10 @@ const testConnectivity = async () => {
     })
 
     await wrapMethodCall('Basic test of Redis', async () => {
-      await redisClient.set(REDIS_TEST_KEY, REDIS_TEST_VALUE)
-      const fetchValue = await redisClient.get(REDIS_TEST_KEY)
-      await redisClient.del(REDIS_TEST_KEY)
+      const key = makeRedisKey(REDIS_TEST_KEY)
+      await redisClient.set(key, REDIS_TEST_VALUE)
+      const fetchValue = await redisClient.get(key)
+      await redisClient.del(key)
 
       if (fetchValue !== REDIS_TEST_VALUE) {
         throw new Error('Could not complete a basic operation on Redis')
@@ -158,9 +163,18 @@ const testConnectivity = async () => {
 
     try {
       // @ts-ignore typing missing for that method
-      const reply = await redisClient.pubsub(['NUMSUB', 'job_done'])
+      const reply = await redisClient.pubsub(['NUMSUB', makeRedisKey('job_done')])
+      process.env.BP_REDIS_SCOPE && printRow('Redis using scope', process.env.BP_REDIS_SCOPE)
       printRow('Botpress nodes listening on Redis', reply[1])
     } catch (err) {}
+
+    try {
+      for (const client of await getClientsList(redisClient)) {
+        printRow(`- Client ${client.parsed.name}`, `Uptime: ${client.parsed.age}s`)
+      }
+    } catch (err) {
+      printRow('- Error getting clients list', err)
+    }
   }
 }
 
@@ -179,7 +193,7 @@ const testNetworkConnections = async () => {
   ]
 
   try {
-    const nluConfig = await Ghost.global().readFileAsObject<any>('config/', 'nlu.json')
+    const nluConfig = await app.ghost.global().readFileAsObject<any>('config/', 'nlu.json')
     const duckling = process.env.BP_MODULE_NLU_DUCKLINGURL || nluConfig?.ducklingURL
     const langServer =
       (process.env.BP_MODULE_NLU_LANGUAGESOURCES &&
@@ -200,10 +214,13 @@ const testNetworkConnections = async () => {
 
 const printDatabaseTables = async () => {
   let tables
-  if (Db.knex.isLite) {
-    tables = await Db.knex.raw("SELECT name FROM sqlite_master WHERE type='table'").then(res => res.map(x => x.name))
+  if (app.database.knex.isLite) {
+    tables = await app.database.knex
+      .raw("SELECT name FROM sqlite_master WHERE type='table'")
+      .then(res => res.map(x => x.name))
   } else {
-    tables = await Db.knex('pg_catalog.pg_tables')
+    tables = await app.database
+      .knex('pg_catalog.pg_tables')
       .select('tablename')
       .where({ schemaname: 'public' })
       .then(res => res.map(x => x.tablename))
@@ -245,13 +262,13 @@ const printConfig = async () => {
 }
 
 const printBotsList = async () => {
-  const workspaces = await Ghost.global().readFileAsObject<Workspace[]>('/', 'workspaces.json')
-  const botIds = (await Ghost.bots().directoryListing('/', 'bot.config.json')).map(path.dirname)
+  const workspaces = await app.ghost.global().readFileAsObject<Workspace[]>('/', 'workspaces.json')
+  const botIds = (await app.ghost.bots().directoryListing('/', 'bot.config.json')).map(path.dirname)
 
   await Promise.mapSeries(botIds, async botId => {
     printHeader(`Bot "${botId}" (workspace: ${workspaces.find(x => x.bots.includes(botId))?.id})`)
 
-    const botConfig = await Ghost.forBot(botId).readFileAsObject<BotConfig>('/', 'bot.config.json')
+    const botConfig = await app.ghost.forBot(botId).readFileAsObject<BotConfig>('/', 'bot.config.json')
     printObject(botConfig, includePasswords)
 
     await printModulesConfig(botId)
@@ -259,7 +276,8 @@ const printBotsList = async () => {
 }
 
 const printMigrationHistory = async () => {
-  const history = await Db.knex('srv_migrations')
+  const history = await app.database
+    .knex('srv_migrations')
     .select('*')
     .orderBy('created_at', 'desc')
 
@@ -272,16 +290,17 @@ const printMigrationHistory = async () => {
 }
 
 export default async function(options: Options) {
+  app = createApp()
   includePasswords = options.includePasswords || yn(process.env.BP_DIAG_INCLUDE_PASSWORDS)
   outputFile = options.outputFile || yn(process.env.BP_DIAG_OUTPUT)
 
-  printGeneralInfos()
+  await printGeneralInfos()
   listEnvironmentVariables()
 
   await testConnectivity()
   try {
     // Must be after the connectivity test, but before network connections so we have duckling/lang server urls
-    botpressConfig = await Ghost.global().readFileAsObject<any>('/', 'botpress.config.json')
+    botpressConfig = await app.ghost.global().readFileAsObject<any>('/', 'botpress.config.json')
   } catch (err) {}
 
   await testNetworkConnections()

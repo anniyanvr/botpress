@@ -32,13 +32,13 @@ export default async (bp: typeof sdk, db: Db) => {
   )
 
   router.post(
-    '/events/:id/status',
+    '/events/status',
     asyncMiddleware(async (req: Request, res: Response) => {
-      const { id, botId } = req.params
-      const { status, ...resolutionData } = req.body
+      const { botId } = req.params
+      const { ids, status, ...resolutionData } = req.body
 
       try {
-        await db.updateStatus(botId, id, status, resolutionData)
+        await db.updateStatuses(botId, ids, status, resolutionData)
         res.sendStatus(200)
       } catch (err) {
         throw new UnexpectedError('Could not update event', err)
@@ -50,10 +50,10 @@ export default async (bp: typeof sdk, db: Db) => {
     '/events/count',
     asyncMiddleware(async (req: Request, res: Response) => {
       const { botId } = req.params
-      const { language, startDate, endDate } = extractQuery(req.query)
+      const { language, startDate, endDate, reason } = extractQuery(req.query)
 
       try {
-        const data = await db.countEvents(botId, language, { startDate, endDate })
+        const data = await db.countEvents(botId, language, { startDate, endDate, reason })
         res.json(data)
       } catch (err) {
         throw new StandardError(err)
@@ -65,10 +65,10 @@ export default async (bp: typeof sdk, db: Db) => {
     `/events/:status(${FLAGGED_MESSAGE_STATUSES.join('|')})`,
     asyncMiddleware(async (req: Request, res: Response) => {
       const { botId, status } = req.params
-      const { language, startDate, endDate } = extractQuery(req.query)
+      const { language, startDate, endDate, reason } = extractQuery(req.query)
 
       try {
-        const data = await db.listEvents(botId, language, status, { startDate, endDate })
+        const data = await db.listEvents(botId, language, status, { startDate, endDate, reason })
         res.json(data)
       } catch (err) {
         throw new StandardError('Error listing events', err)
@@ -101,12 +101,27 @@ export default async (bp: typeof sdk, db: Db) => {
       const { botId } = req.params
 
       try {
-        await db.applyChanges(botId)
+        const modifiedLanguages = await db.applyChanges(botId)
         const axiosConfig = await bp.http.getAxiosConfigForBot(botId, { localUrl: true })
         setTimeout(() => {
-          // tslint:disable-next-line: no-floating-promises
-          axios.post('/mod/nlu/train', {}, axiosConfig)
+          // eslint-disable-next-line @typescript-eslint/no-floating-promises
+          Promise.map(modifiedLanguages, lang => axios.post(`/mod/nlu/train/${lang}`, {}, axiosConfig))
         }, 1000)
+        res.sendStatus(200)
+      } catch (err) {
+        throw new StandardError('Could not apply changes', err)
+      }
+    })
+  )
+
+  router.post(
+    '/delete-all',
+    asyncMiddleware(async (req: Request, res: Response) => {
+      const { botId } = req.params
+      const { status } = req.body
+
+      try {
+        await db.deleteAll(botId, status)
         res.sendStatus(200)
       } catch (err) {
         throw new StandardError('Could not apply changes', err)
@@ -124,10 +139,10 @@ export default async (bp: typeof sdk, db: Db) => {
   }
 
   const extractQuery = query => {
-    const { language, start, end } = query
+    const { language, start, end, reason } = query
     const startDate = start && unixToDate(start)
     const endDate = end && unixToDate(end)
 
-    return { language, startDate, endDate }
+    return { language, startDate, endDate, reason }
   }
 }

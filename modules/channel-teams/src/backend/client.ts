@@ -1,25 +1,28 @@
-import {
-  Activity,
-  AttachmentLayoutTypes,
-  BotFrameworkAdapter,
-  CardFactory,
-  ConversationReference,
-  TurnContext
-} from 'botbuilder'
+import { Activity, ActivityTypes, BotFrameworkAdapter, ConversationReference, TurnContext } from 'botbuilder'
 import { MicrosoftAppCredentials } from 'botframework-connector'
 import * as sdk from 'botpress/sdk'
+import { ChannelRenderer, ChannelSender } from 'common/channel'
+import { Request, Response } from 'express'
 import _ from 'lodash'
-
 import { Config } from '../config'
+import {
+  TeamsCardRenderer,
+  TeamsCarouselRenderer,
+  TeamsChoicesRenderer,
+  TeamsImageRenderer,
+  TeamsTextRenderer,
+  TeamsDropdownRenderer
+} from '../renderers'
+import { TeamsCommonSender, TeamsTypingSender } from '../senders'
 
-import { Clients } from './typings'
-
-const outgoingTypes = ['message', 'typing', 'carousel', 'text', 'dropdown_choice']
+import { Clients, TeamsContext } from './typings'
 
 export class TeamsClient {
   private inMemoryConversationRefs: _.Dictionary<Partial<ConversationReference>> = {}
   private adapter: BotFrameworkAdapter
   private logger: sdk.Logger
+  private renderers: ChannelRenderer<TeamsContext>[]
+  private senders: ChannelSender<TeamsContext>[]
 
   constructor(private bp: typeof sdk, private botId: string, private config: Config, private publicPath: string) {
     this.logger = bp.logger.forBot(this.botId)
@@ -28,54 +31,68 @@ export class TeamsClient {
   async initialize() {
     if (!this.config.appId || !this.config.appPassword) {
       return this.logger.error(
-        'You need to set the appId and the appPassword before enabling this channel. It will be disabled for this bot.'
+        `[${this.botId}] You need to set the appId and the appPassword before enabling this channel. It will be disabled for this bot.`
       )
     }
 
     if (!(await this.validateCredentials())) {
       return this.logger.error(
-        `Could not validate the specified credentials.
+        `[${this.botId}] Could not validate the specified credentials.
 Make sure that your appId and appPassword are valid.
 If you have a restricted app, you may need to specify the tenantId also.`
       )
     }
 
     this.bp.logger.info(
-      `Successfully validated credentials for Microsoft Teams channel with App ID: ${this.config.appId}`
+      `[${this.botId}] Successfully validated credentials for Microsoft Teams channel with App ID: ${this.config.appId}`
     )
 
     if (!this.publicPath || this.publicPath.indexOf('https://') !== 0) {
       return this.logger.error(
-        'You need to configure an HTTPS url for this channel to work properly. See EXTERNAL_URL in botpress config.'
+        `[${this.botId}] You need to configure an HTTPS url for this channel to work properly. See EXTERNAL_URL in botpress config.`
       )
     }
 
-    this.logger.info(`Messaging API URL: ${this.publicPath.replace('BOT_ID', this.botId)}/api/messages`)
+    this.logger.info(`[${this.botId}] Messaging API URL: ${this.publicPath.replace('BOT_ID', this.botId)}/api/messages`)
 
     this.adapter = new BotFrameworkAdapter({
       appId: this.config.appId,
       appPassword: this.config.appPassword,
       channelAuthTenant: this.config.tenantId
     })
+
+    this.renderers = [
+      new TeamsCardRenderer(),
+      new TeamsTextRenderer(),
+      new TeamsImageRenderer(),
+      new TeamsCarouselRenderer(),
+      new TeamsDropdownRenderer(),
+      new TeamsChoicesRenderer()
+    ]
+    this.senders = [new TeamsTypingSender(), new TeamsCommonSender()]
   }
 
-  async receiveIncomingEvent(req, res) {
+  async receiveIncomingEvent(req: Request, res: Response) {
     await this.adapter.processActivity(req, res, async turnContext => {
       const { activity } = turnContext
 
       const conversationReference = TurnContext.getConversationReference(activity)
+      const threadId = conversationReference.conversation.id
+
       if (activity.value?.text) {
         activity.text = activity.value.text
       }
-      if (!activity.text) {
-        // To prevent from emojis reactions to launch actual events
-        return
+
+      if (this._botAddedToConversation(activity)) {
+        // Locale format: {lang}-{subtag1}-{subtag2}-... https://en.wikipedia.org/wiki/IETF_language_tag
+        // TODO: Use Intl.Locale().language once its types are part of TS. See: https://github.com/microsoft/TypeScript/issues/37326
+        const lang = activity.locale?.split('-')[0]
+        await this._sendProactiveMessage(activity, conversationReference, lang)
+      } else if (activity.text) {
+        await this._sendIncomingEvent(activity, threadId)
       }
 
-      const threadId = conversationReference.conversation.id
       await this._setConversationRef(threadId, conversationReference)
-
-      await this._sendIncomingEvent(activity, threadId)
     })
   }
 
@@ -87,6 +104,17 @@ If you have a restricted app, you may need to specify the tenantId also.`
     } catch (err) {
       return false
     }
+  }
+
+  /**
+   * Determine whether the bot has just been added to the conversation or not
+   */
+  private _botAddedToConversation(activity: Activity): boolean {
+    // https://docs.microsoft.com/en-us/previous-versions/azure/bot-service/dotnet/bot-builder-dotnet-activities?view=azure-bot-service-3.0#conversationupdate
+    return (
+      activity.type === ActivityTypes.ConversationUpdate &&
+      activity.membersAdded?.some(member => member.id === activity.recipient.id)
+    )
   }
 
   private async _getConversationRef(threadId: string): Promise<Partial<ConversationReference>> {
@@ -110,161 +138,96 @@ If you have a restricted app, you may need to specify the tenantId also.`
     return this.bp.kvs.forBot(this.botId).set(threadId, convRef)
   }
 
-  private _sendIncomingEvent = async (activity: Activity, threadId: string) => {
-    const { text, from, type } = activity
+  async _sendProactiveMessage(
+    activity: Activity,
+    conversationReference: Partial<ConversationReference>,
+    lang?: string
+  ): Promise<void> {
+    const defaultLanguage = (await this.bp.bots.getBotById(this.botId)).defaultLanguage
+    const proactiveMessages = this.config.proactiveMessages || {}
+    const message = (lang && proactiveMessages[lang]) || proactiveMessages[defaultLanguage]
 
-    await this.bp.events.sendEvent(
-      this.bp.IO.Event({
-        botId: this.botId,
-        channel: 'teams',
-        direction: 'incoming',
-        payload: { text },
-        preview: text,
-        threadId,
-        target: from.id,
-        type
+    if (message) {
+      conversationReference.serviceUrl && MicrosoftAppCredentials.trustServiceUrl(conversationReference.serviceUrl)
+      await this.adapter.continueConversation(conversationReference, async turnContext => {
+        await turnContext.sendActivity(message)
       })
-    )
+
+      const convoId = await this.getLocalConvo(conversationReference.conversation.id, activity.from.id)
+      await this.bp.experimental.messages.forBot(this.botId).create(convoId, { type: 'text', text: message })
+    }
   }
 
-  public async sendOutgoingEvent(event: sdk.IO.Event): Promise<void> {
-    const messageType = event.type === 'default' ? 'text' : event.type
+  private _sendIncomingEvent = async (activity: Activity, threadId: string) => {
+    const {
+      text,
+      from: { id: userId }
+    } = activity
 
-    if (!_.includes(outgoingTypes, messageType)) {
-      throw new Error(`Unsupported event type: ${event.type}`)
+    const convoId = await this.getLocalConvo(threadId, userId)
+
+    const type = activity.value?.renderer === 'choices' ? 'quick_reply' : 'text'
+
+    await this.bp.experimental.messages.forBot(this.botId).receive(convoId, { type, text }, { channel: 'teams' })
+  }
+
+  private async getLocalConvo(threadId: string, userId: string): Promise<string> {
+    let convoId = await this.bp.experimental.conversations
+      .forBot(this.botId)
+      .getLocalId('teams', `${threadId}&${userId}`)
+
+    if (!convoId) {
+      const conversation = await this.bp.experimental.conversations.forBot(this.botId).create(userId)
+      convoId = conversation.id
+
+      await this.bp.experimental.conversations
+        .forBot(this.botId)
+        .createMapping('teams', conversation.id, `${threadId}&${userId}`)
     }
 
-    const ref = await this._getConversationRef(event.threadId)
-    if (!ref) {
+    return convoId
+  }
+
+  public async sendOutgoingEvent(event: sdk.IO.OutgoingEvent): Promise<void> {
+    const foreignId = await this.bp.experimental.conversations.forBot(this.botId).getForeignId('teams', event.threadId)
+    const [threadId, userId] = foreignId.split('&')
+
+    const convoRef = await this._getConversationRef(threadId)
+    if (!convoRef) {
       this.bp.logger.warn(
-        `No message could be sent to MS Botframework with threadId: ${event.threadId} as there is no conversation reference`
+        `[${this.botId}] No message could be sent to MS Botframework with threadId: ${threadId} as there is no conversation reference`
       )
       return
     }
 
-    let msg: any = event.payload // TODO: place this logic in builtin with content-types
-    if (msg.type === 'typing') {
-      msg = {
-        type: 'typing'
+    const context: TeamsContext = {
+      bp: this.bp,
+      event,
+      client: this.adapter,
+      handlers: [],
+      payload: _.cloneDeep(event.payload),
+      botUrl: process.EXTERNAL_URL,
+      messages: [],
+      threadId,
+      convoRef
+    }
+
+    for (const renderer of this.renderers) {
+      if (renderer.handles(context)) {
+        renderer.render(context)
+        context.handlers.push(renderer.id)
       }
-    } else if (msg.type === 'carousel') {
-      msg = this._prepareCarouselPayload(event)
-    } else if (msg.quick_replies && msg.quick_replies.length) {
-      msg = this._prepareChoicePayload(event)
-    } else if (msg.type === 'dropdown_choice') {
-      msg = this._prepareDropdownPayload(event)
     }
 
-    try {
-      await this.adapter.continueConversation(ref, async (turnContext: TurnContext) => {
-        await turnContext.sendActivity(msg)
-      })
-    } catch (err) {
-      this.logger.attachError(err).error(`Error while sending payload of type "${msg.type}" `)
+    for (const sender of this.senders) {
+      if (sender.handles(context)) {
+        await sender.send(context)
+      }
     }
-  }
 
-  private _prepareChoicePayload(event: sdk.IO.Event) {
-    return {
-      text: event.payload.text,
-      attachments: [
-        CardFactory.heroCard(
-          '',
-          CardFactory.images([]),
-          CardFactory.actions(
-            event.payload.quick_replies.map(reply => {
-              return {
-                title: reply.title,
-                type: 'messageBack',
-                value: reply.payload,
-                text: reply.payload,
-                displayText: reply.title
-              }
-            })
-          )
-        )
-      ]
-    }
-  }
-
-  private _prepareDropdownPayload(event: sdk.IO.Event) {
-    return {
-      type: 'message',
-      attachments: [
-        CardFactory.adaptiveCard({
-          type: 'AdaptiveCard',
-          body: [
-            {
-              type: 'TextBlock',
-              size: 'Medium',
-              weight: 'Bolder',
-              text: event.payload.message
-            },
-            {
-              type: 'Input.ChoiceSet',
-              choices: event.payload.options.map((opt, idx) => ({
-                title: opt.label,
-                id: `choice-${idx}`,
-                value: opt.value
-              })),
-              id: 'text',
-              placeholder: 'Select a choice',
-              wrap: true
-            }
-          ],
-          actions: [
-            {
-              type: 'Action.Submit',
-              title: event.payload.buttonText,
-              id: 'btnSubmit'
-            }
-          ],
-          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-          version: '1.2'
-        })
-      ]
-    }
-  }
-
-  private _prepareCarouselPayload(event: sdk.IO.Event) {
-    return {
-      type: 'message',
-      attachments: event.payload.elements.map(card => {
-        const contentUrl = card.picture
-
-        return CardFactory.heroCard(
-          card.title,
-          CardFactory.images([contentUrl]),
-          CardFactory.actions(
-            card.buttons.map(button => {
-              if (button.type === 'open_url') {
-                return {
-                  type: 'openUrl',
-                  value: button.url,
-                  title: button.title
-                }
-              } else if (button.type === 'say_something') {
-                return {
-                  type: 'messageBack',
-                  title: button.title,
-                  value: button.text,
-                  text: button.text,
-                  displayText: button.text
-                }
-              } else if (button.type === 'postback') {
-                return {
-                  type: 'messageBack',
-                  title: button.title,
-                  value: button.payload,
-                  text: button.payload
-                }
-              }
-            })
-          )
-        )
-      }),
-      attachmentLayout: AttachmentLayoutTypes.Carousel
-    }
+    await this.bp.experimental.messages
+      .forBot(event.botId)
+      .create(event.threadId, event.payload, undefined, event.id, event.incomingEventId)
   }
 }
 

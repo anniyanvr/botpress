@@ -1,14 +1,13 @@
 import * as sdk from 'botpress/sdk'
+import { GhostService } from 'core/bpfs'
 import { sanitizeFileName } from 'core/misc/utils'
-
-import { GhostService } from '..'
-
 import * as CacheManager from './cache-manager'
 import { NLUService } from './nlu-service'
 
 const ENTITIES_DIR = './entities'
 
-const DUCKLING_ENTITIES = [
+// copied from botpress/nlu repo
+const SYSTEM_ENTITIES = [
   'amountOfMoney',
   'distance',
   'duration',
@@ -24,7 +23,7 @@ const DUCKLING_ENTITIES = [
 ]
 
 const getSystemEntities = (): sdk.NLU.EntityDefinition[] => {
-  return [...DUCKLING_ENTITIES, 'any'].map(name => ({ name, type: 'system' })) as sdk.NLU.EntityDefinition[]
+  return [...SYSTEM_ENTITIES, 'any'].map(name => ({ name, type: 'system' })) as sdk.NLU.EntityDefinition[]
 }
 
 export class EntityService {

@@ -9,6 +9,8 @@ import { Config } from '../config'
 
 import { DBMessage } from './typings'
 
+const SEPARATOR = '*'
+
 export default class WebchatDb {
   private readonly MAX_RETRY_ATTEMPTS = 3
   private knex: sdk.KnexExtended
@@ -21,17 +23,16 @@ export default class WebchatDb {
 
   constructor(private bp: typeof sdk) {
     this.users = bp.users
-    this.knex = bp['database'] // TODO Fixme
-
+    this.knex = bp.database
     this.batchSize = this.knex.isLite ? 40 : 2000
 
     setInterval(() => this.flush(), ms('1s'))
   }
 
   flush() {
-    // tslint:disable-next-line: no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.flushMessages()
-    // tslint:disable-next-line: no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     this.flushConvoUpdates()
   }
 
@@ -71,7 +72,7 @@ export default class WebchatDb {
         const queries = []
 
         for (const key in this.batchedConvos) {
-          const [conversationId, userId, botId] = key.split('_')
+          const [conversationId, userId, botId] = key.split(SEPARATOR)
           const value = this.batchedConvos[key]
 
           const query = this.knex('web_conversations')
@@ -147,7 +148,7 @@ export default class WebchatDb {
       .then(() => {
         // Index creation with where condition is unsupported by knex
         return this.knex.raw(
-          `CREATE INDEX IF NOT EXISTS wmcms_idx ON web_messages ("conversationId", message_type, sent_on DESC) WHERE message_type != 'visit';`
+          'CREATE INDEX IF NOT EXISTS wmcms_idx ON web_messages ("conversationId", message_type, sent_on DESC) WHERE message_type != \'visit\';'
         )
       })
   }
@@ -181,7 +182,7 @@ export default class WebchatDb {
     }
 
     this.batchedMessages.push(message)
-    this.batchedConvos[`${conversationId}_${userId}_${botId}`] = this.knex.date.format(now)
+    this.batchedConvos[`${conversationId}${SEPARATOR}${userId}${SEPARATOR}${botId}`] = this.knex.date.format(now)
 
     return {
       ...message,
@@ -318,7 +319,7 @@ export default class WebchatDb {
           .where({ userId, botId })
           .as('wc')
       })
-      .leftJoin(lastMessages.as('wm'), 'wm.conversationId', 'wc.id')
+      .innerJoin(lastMessages.as('wm'), 'wm.conversationId', 'wc.id')
       .orderBy('wm.sent_on', 'desc')
       .select(
         'wc.id',
@@ -333,6 +334,16 @@ export default class WebchatDb {
         this.knex.raw('wm.avatar_url as message_author_avatar'),
         this.knex.raw('wm.sent_on as message_sent_on')
       )
+  }
+
+  async isValidConversationOwner(userId: string, conversationId: number, botId: string): Promise<boolean> {
+    const conversation = await this.knex('web_conversations')
+      .select('id')
+      .where({ userId, botId, id: conversationId })
+      .then()
+      .get(0)
+
+    return conversation?.id === conversationId
   }
 
   async getConversation(userId, conversationId, botId) {
@@ -364,6 +375,16 @@ export default class WebchatDb {
 
     return Object.assign({}, conversation, {
       messages: _.orderBy(messages, ['sent_on'], ['asc'])
+    })
+  }
+
+  async deleteConversationMessages(conversationId: number) {
+    return this.knex.transaction(async trx => {
+      // TODO: Delete the related events using bp SDK
+
+      await trx('web_messages')
+        .del()
+        .where({ conversationId })
     })
   }
 

@@ -2,18 +2,18 @@ import { AxiosInstance } from 'axios'
 import React, { FC, useContext, useEffect } from 'react'
 
 import { WEBSOCKET_TOPIC } from '../../constants'
+import { makeClient } from '../client'
 
 import { ISocketMessage } from './../../types'
 import { Context, Store } from './agentStatus/Store'
 import AgentIcon from './shared/components/AgentIcon'
-import { Api } from './Api'
 
 interface Props {
   bp: { axios: AxiosInstance; events: any }
 }
 
 const AgentStatus: FC<Props> = ({ bp }) => {
-  const api = Api(bp)
+  const api = makeClient(bp)
 
   const { state, dispatch } = useContext(Context)
 
@@ -36,7 +36,7 @@ const AgentStatus: FC<Props> = ({ bp }) => {
   }
 
   useEffect(() => {
-    // tslint:disable-next-line: no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     getCurrentAgent()
   }, [])
 

@@ -6,12 +6,14 @@ import { Request, Response } from 'express'
 import Joi from 'joi'
 import _ from 'lodash'
 
+import { Config } from '../config'
 import { MODULE_NAME } from '../constants'
+import { agentName } from '../helper'
 
-import { HandoffType, IAgent, IComment, IHandoff } from './../types'
+import { StateType } from './index'
+import { HandoffStatus, IAgent, IComment, IHandoff } from './../types'
 import { UnprocessableEntityError } from './errors'
 import { extendAgentSession, formatValidationError, makeAgentId } from './helpers'
-import { StateType } from './index'
 import Repository, { CollectionConditions } from './repository'
 import Socket from './socket'
 import {
@@ -20,6 +22,7 @@ import {
   CreateCommentSchema,
   CreateHandoffSchema,
   ResolveHandoffSchema,
+  UpdateHandoffSchema,
   validateHandoffStatusRule
 } from './validation'
 
@@ -83,7 +86,15 @@ export default async (bp: typeof sdk, state: StateType) => {
   router.get(
     '/agents',
     errorMiddleware(async (req: RequestWithUser, res: Response) => {
-      const agents = await repository.listAgents(req.params.botId, req.workspace)
+      const agents = await repository.listAgents(req.workspace).then(agents => {
+        return Promise.map(agents, async agent => {
+          return {
+            ...agent,
+            online: await repository.getAgentOnline(req.params.botId, agent.agentId)
+          }
+        })
+      })
+
       res.send(agents)
     })
   )
@@ -131,7 +142,7 @@ export default async (bp: typeof sdk, state: StateType) => {
     errorMiddleware(async (req: Request, res: Response) => {
       const payload: Pick<IHandoff, 'userId' | 'userThreadId' | 'userChannel' | 'status'> = {
         ..._.pick(req.body, ['userId', 'userThreadId', 'userChannel']),
-        status: <HandoffType>'pending'
+        status: <HandoffStatus>'pending'
       }
 
       Joi.attempt(payload, CreateHandoffSchema)
@@ -148,6 +159,8 @@ export default async (bp: typeof sdk, state: StateType) => {
         return res.sendStatus(200)
       }
 
+      const configs: Config = await bp.config.getModuleConfigForBot(MODULE_NAME, req.params.botId)
+
       const handoff = await repository.createHandoff(req.params.botId, payload).then(handoff => {
         state.cacheHandoff(req.params.botId, handoff.userThreadId, handoff)
         return handoff
@@ -160,14 +173,12 @@ export default async (bp: typeof sdk, state: StateType) => {
         channel: handoff.userChannel
       }
 
-      bp.events.replyToEvent(
-        eventDestination,
-        await bp.cms.renderElement(
-          'builtin_text',
-          { type: 'text', text: 'You are being transfered to an agent.' },
-          eventDestination
+      if (configs.transferMessage) {
+        bp.events.replyToEvent(
+          eventDestination,
+          await bp.cms.renderElement('@builtin_text', { type: 'text', text: configs.transferMessage }, eventDestination)
         )
-      )
+      }
 
       realtime.sendPayload(req.params.botId, {
         resource: 'handoff',
@@ -181,18 +192,49 @@ export default async (bp: typeof sdk, state: StateType) => {
   )
 
   router.post(
+    '/handoffs/:id',
+    errorMiddleware(async (req: Request, res: Response) => {
+      const { botId, id } = req.params
+      const payload: Pick<IHandoff, 'tags'> = {
+        ..._.pick(req.body, ['tags'])
+      }
+
+      Joi.attempt(payload, UpdateHandoffSchema)
+
+      const handoff = await repository.updateHandoff(botId, id, payload)
+      state.cacheHandoff(botId, handoff.userThreadId, handoff)
+
+      realtime.sendPayload(botId, {
+        resource: 'handoff',
+        type: 'update',
+        id: handoff.id,
+        payload: handoff
+      })
+
+      res.send(handoff)
+    })
+  )
+
+  router.post(
     '/handoffs/:id/assign',
     agentOnlineMiddleware,
     errorMiddleware(async (req: RequestWithUser, res: Response) => {
       const { botId } = req.params
       const { email, strategy } = req.tokenUser!
+      const { webSessionId } = req.body
 
       const agentId = makeAgentId(strategy, email)
+      const agent = await repository.getCurrentAgent(req as BPRequest, req.params.botId, agentId)
 
       let handoff = await repository.findHandoff(req.params.botId, req.params.id)
 
       const axioxconfig = await bp.http.getAxiosConfigForBot(botId, { localUrl: true })
-      const { data } = await Axios.post(`/mod/channel-web/conversations/${agentId}/new`, {}, axioxconfig)
+      // TODO replace this by messaging API
+      const { data } = await Axios.post(
+        '/mod/channel-web/conversations/new',
+        { userId: agentId, webSessionId },
+        axioxconfig
+      )
       const agentThreadId = data.convoId.toString()
       const payload: Pick<IHandoff, 'agentId' | 'agentThreadId' | 'assignedAt' | 'status'> = {
         agentId,
@@ -213,48 +255,61 @@ export default async (bp: typeof sdk, state: StateType) => {
 
       await extendAgentSession(repository, realtime, req.params.botId, agentId)
 
-      const baseCustomEventPayload: Partial<sdk.IO.EventCtorArgs> = {
-        botId: handoff.botId,
-        direction: 'outgoing',
-        type: 'custom',
-        payload: {
-          type: 'custom',
-          module: MODULE_NAME
+      const configs: Config = await bp.config.getModuleConfigForBot(MODULE_NAME, req.params.botId)
+
+      if (configs.assignMessage) {
+        const eventDestination = {
+          botId: req.params.botId,
+          target: handoff.userId,
+          threadId: handoff.userThreadId,
+          channel: handoff.userChannel
         }
+
+        // TODO replace this by render service
+        const assignedPayload = await bp.cms.renderElement(
+          '@builtin_text',
+          { type: 'text', text: configs.assignMessage, agentName: agentName(agent) },
+          eventDestination
+        )
+        bp.events.replyToEvent(eventDestination, assignedPayload)
       }
 
-      // custom event to user
-      await bp.events.sendEvent(
-        bp.IO.Event(
-          _.merge(_.cloneDeep(baseCustomEventPayload), {
-            target: handoff.userId,
-            threadId: handoff.userThreadId,
-            channel: handoff.userChannel,
-            payload: { from: 'bot', component: 'HandoffAssignedForUser' }
-          }) as sdk.IO.EventCtorArgs
-        )
-      )
-
-      const recentEvents = await bp.events.findEvents(
+      // TODO replace this by messaging api once all channels have been ported
+      const rencentUserConversationEvents = await bp.events.findEvents(
         { botId, threadId: handoff.userThreadId },
         { count: 10, sortOrder: [{ column: 'id', desc: true }] }
       )
 
-      // custom event to agent
+      const baseEvent: Partial<sdk.IO.EventCtorArgs> = {
+        direction: 'outgoing',
+        channel: 'web',
+        botId: handoff.botId,
+        target: handoff.agentId,
+        threadId: handoff.agentThreadId
+      }
+
+      await Promise.mapSeries(rencentUserConversationEvents.reverse(), event => {
+        // @ts-ignore
+        const e = bp.IO.Event({
+          type: event.event.type,
+          payload: event.event.payload,
+          ...baseEvent
+        } as sdk.IO.EventCtorArgs)
+        return bp.events.sendEvent(e)
+      })
+
       await bp.events.sendEvent(
-        bp.IO.Event(
-          _.merge(_.cloneDeep(baseCustomEventPayload), {
-            target: handoff.agentId,
-            channel: 'web',
-            threadId: handoff.agentThreadId,
-            payload: {
-              component: 'HandoffAssignedForAgent',
-              recentEvents,
-              noBubble: true,
-              wrapped: { type: 'handoff' }
-            } // super hack to make sure wrapper use our style, don't change this until fixed properly
-          } as sdk.IO.EventCtorArgs)
-        )
+        bp.IO.Event({
+          ...baseEvent,
+          type: 'custom',
+          payload: {
+            type: 'custom',
+            module: MODULE_NAME,
+            component: 'HandoffAssignedForAgent',
+            noBubble: true,
+            wrapped: { type: 'handoff' }
+          }
+        } as sdk.IO.EventCtorArgs)
       )
 
       realtime.sendPayload(req.params.botId, {

@@ -1,8 +1,8 @@
 import { BotConfig, Logger } from 'botpress/sdk'
 import { ObjectCache } from 'common/object-cache'
+import { GhostService } from 'core/bpfs'
 import { calculateHash, stringify } from 'core/misc/utils'
-import ModuleResolver from 'core/modules/resolver'
-import { GhostService } from 'core/services'
+import { ModuleResolver } from 'core/modules'
 import { TYPES } from 'core/types'
 import { FatalError } from 'errors'
 import fs from 'fs'
@@ -12,6 +12,7 @@ import _, { PartialDeep } from 'lodash'
 import path from 'path'
 
 import { BotpressConfig } from './botpress.config'
+import { getValidJsonSchemaProperties, getValueFromEnvKey, SchemaNode } from './config-utils'
 
 /**
  * These properties should not be considered when calculating the config hash
@@ -33,7 +34,7 @@ export class ConfigProvider {
     @inject(TYPES.ObjectCache) private cache: ObjectCache
   ) {
     this.cache.events.on('invalidation', async key => {
-      if (key === 'object::data/global/botpress.config.json') {
+      if (key === 'object::data/global/botpress.config.json' || key === 'file::data/global/botpress.config.json') {
         this._botpressConfigCache = undefined
         const config = await this.getBotpressConfig()
 
@@ -51,7 +52,9 @@ export class ConfigProvider {
     await this.createDefaultConfigIfMissing()
 
     const config = await this.getConfig<BotpressConfig>('botpress.config.json')
+    _.merge(config, await this._loadBotpressConfigFromEnv(config))
 
+    // deprecated notice
     const envPort = process.env.BP_PORT || process.env.PORT
     config.httpServer.port = envPort ? parseInt(envPort) : config.httpServer.port
     config.httpServer.host = process.env.BP_HOST || config.httpServer.host
@@ -60,6 +63,22 @@ export class ConfigProvider {
     if (config.pro) {
       config.pro.licenseKey = process.env.BP_LICENSE_KEY || config.pro.licenseKey
     }
+
+    const deprecatedEnvKeys = [
+      ['BP_PORT', 'httpServer.port'],
+      ['BP_HOST', 'httpServer.host'],
+      ['BP_PROXY', 'httpServer.proxy'],
+      ['BP_LICENSE_KEY', 'pro.licenseKey'],
+      ['PRO_ENABLED', 'pro.enabled']
+    ]
+    deprecatedEnvKeys.forEach(([depr, preferred]) => {
+      const newKey = this._makeBPConfigEnvKey(preferred)
+      if (process.env[depr] !== undefined) {
+        this.logger.warn(
+          `(Deprecated) use standard syntax to set config from environment variable: ${depr} ==> ${newKey}`
+        )
+      }
+    })
 
     this._botpressConfigCache = config
 
@@ -70,11 +89,34 @@ export class ConfigProvider {
     return config
   }
 
+  private _makeBPConfigEnvKey(option: string): string {
+    return `BP_CONFIG_${option.split('.').join('_')}`.toUpperCase()
+  }
+
+  private async _loadBotpressConfigFromEnv(currentConfig: BotpressConfig): Promise<PartialDeep<BotpressConfig>> {
+    const configOverrides: PartialDeep<BotpressConfig> = {}
+    const weakSchema = await this._getBotpressConfigSchema()
+    const options = await getValidJsonSchemaProperties(weakSchema as SchemaNode, currentConfig)
+    for (const option of options) {
+      const envKey = this._makeBPConfigEnvKey(option)
+      const value = getValueFromEnvKey(envKey)
+      if (value !== undefined) {
+        _.set(configOverrides, option, value)
+      }
+    }
+
+    return configOverrides
+  }
+
   async mergeBotpressConfig(partialConfig: PartialDeep<BotpressConfig>, clearHash?: boolean): Promise<void> {
     this._botpressConfigCache = undefined
     const content = await this.ghostService.global().readFileAsString('/', 'botpress.config.json')
     const config = _.merge(JSON.parse(content), partialConfig)
 
+    await this.setBotpressConfig(config, clearHash)
+  }
+
+  async setBotpressConfig(config: BotpressConfig, clearHash?: boolean): Promise<void> {
     await this.ghostService.global().upsertFile('/', 'botpress.config.json', stringify(config))
 
     if (clearHash) {
@@ -97,13 +139,15 @@ export class ConfigProvider {
     return config
   }
 
+  private async _getBotpressConfigSchema(): Promise<object> {
+    return this.ghostService.root().readFileAsObject<any>('/', 'botpress.config.schema.json')
+  }
+
   public async createDefaultConfigIfMissing() {
     await this._copyConfigSchemas()
 
     if (!(await this.ghostService.global().fileExists('/', 'botpress.config.json'))) {
-      const botpressConfigSchema = await this.ghostService
-        .root()
-        .readFileAsObject<any>('/', 'botpress.config.schema.json')
+      const botpressConfigSchema = await this._getBotpressConfigSchema()
       const defaultConfig: BotpressConfig = defaultJsonBuilder(botpressConfigSchema)
 
       const config = {
@@ -144,7 +188,7 @@ export class ConfigProvider {
 
     // here it's ok to use the module resolver because we are discovering the built-in modules only
     const resolver = new ModuleResolver(this.logger)
-    return resolver.getModulesList().map(module => {
+    return (await resolver.getModulesList()).map(module => {
       return { location: `MODULES_ROOT/${module}`, enabled: enabledModules.includes(module) }
     })
   }
@@ -199,12 +243,12 @@ export class ConfigProvider {
     const defaultConfig = {
       admin: {
         title: 'Botpress Admin Panel',
-        favicon: 'assets/ui-admin/public/favicon.ico',
+        favicon: 'assets/admin/ui/public/favicon.ico',
         customCss: ''
       },
       studio: {
         title: 'Botpress Studio',
-        favicon: 'assets/ui-studio/public/img/favicon.png',
+        favicon: 'assets/studio/ui/public/img/favicon.png',
         customCss: ''
       }
     }
