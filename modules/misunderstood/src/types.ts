@@ -1,3 +1,5 @@
+import { Content, MessageType } from '@botpress/messaging-components'
+
 export enum FLAGGED_MESSAGE_STATUS {
   new = 'new',
   applied = 'applied',
@@ -10,7 +12,8 @@ export const FLAGGED_MESSAGE_STATUSES = Object.values(FLAGGED_MESSAGE_STATUS)
 export enum FLAG_REASON {
   auto_hook = 'auto_hook',
   action = 'action',
-  manual = 'manual'
+  manual = 'manual',
+  thumbs_down = 'thumbs_down'
 }
 
 export enum RESOLUTION_TYPE {
@@ -37,6 +40,8 @@ export type DbFlaggedEvent = FlaggedEvent & {
 }
 
 export interface ContextMessage {
+  payload: Content<MessageType>
+  type: MessageType
   direction: 'incoming' | 'outgoing'
   preview: string
   payloadMessage: string
@@ -53,3 +58,9 @@ export interface ResolutionData {
   resolution: string | null
   resolutionParams?: object | null
 }
+
+export type FilteringOptions = Partial<{
+  startDate: Date
+  endDate: Date
+  reason?: string
+}>

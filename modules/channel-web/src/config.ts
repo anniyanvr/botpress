@@ -28,6 +28,12 @@ export interface Config {
    */
   recentConversationLifetime?: string
   /**
+   * In case of news messages, even if the scrollbar is not at the bottom,
+   * the chat will scroll down to show the new message
+   * @default false
+   */
+  alwaysScrollDownOnMessages?: boolean
+  /**
    * @default 360
    */
   maxMessageLength?: number
@@ -82,4 +88,10 @@ export interface Config {
    * @default false
    */
   lazySocket: boolean
+
+  /**
+   * If true, chat will no longer play the notification sound for new messages.
+   * @default false
+   */
+  disableNotificationSound: boolean
 }

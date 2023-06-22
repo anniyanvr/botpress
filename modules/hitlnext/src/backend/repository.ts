@@ -1,9 +1,10 @@
 import axios from 'axios'
 import * as sdk from 'botpress/sdk'
-import { SortOrder } from 'botpress/sdk'
 import { BPRequest } from 'common/http'
+import { Workspace } from 'common/typings'
 import Knex from 'knex'
 import _ from 'lodash'
+import LRUCache from 'lru-cache'
 import ms from 'ms'
 
 import { COMMENT_TABLE_NAME, HANDOFF_TABLE_NAME, MODULE_NAME } from '../constants'
@@ -13,8 +14,14 @@ import { makeAgentId } from './helpers'
 
 const debug = DEBUG(MODULE_NAME)
 
-export interface CollectionConditions extends Partial<SortOrder> {
+export interface CollectionConditions extends Partial<sdk.SortOrder> {
   limit?: number
+}
+
+// Copy pasted from channel-web db.ts
+export interface UserMapping {
+  visitorId: string
+  userId: string
 }
 
 const commentPrefix = 'comment'
@@ -30,6 +37,7 @@ const handoffColumns = [
   'userChannel',
   'agentThreadId',
   'status',
+  'tags',
   'assignedAt',
   'resolvedAt',
   'createdAt',
@@ -47,19 +55,36 @@ const commentColumnsPrefixed = commentColumns.map(s => commentPrefix.concat(':',
 const userColumnsPrefixed = userColumns.map(s => userPrefix.concat(':', s))
 
 export default class Repository {
+  private agentCache: Dic<Omit<IAgent, 'online'>> = {}
+  private cacheByVisitor: LRUCache<string, UserMapping>
+
   /**
    *
    * @param bp
    * @param timeouts Object to store agent session timeouts
    */
-  constructor(private bp: typeof sdk, private timeouts: object) {}
+  constructor(private bp: typeof sdk, private timeouts: object) {
+    this.cacheByVisitor = new LRUCache({ max: 10000, maxAge: ms('5min') })
+  }
 
-  // This mutates object
-  private castDate(object: object, paths: string[]) {
+  private serializeDate(object: object, paths: string[]) {
+    const result = _.clone(object)
+
     paths.map(path => {
-      _.has(object, path) && _.set(object, path, this.bp.database.date.format(_.get(object, path)))
+      _.has(object, path) && _.set(result, path, this.bp.database.date.format(_.get(object, path)))
     })
-    return object
+
+    return result
+  }
+
+  private serializeJson(object: object, paths: string[]) {
+    const result = _.clone(object)
+
+    paths.map(path => {
+      _.has(object, path) && _.set(result, path, JSON.stringify(_.get(object, path)))
+    })
+
+    return result
   }
 
   private applyLimit(query: Knex.QueryBuilder, conditions?: CollectionConditions) {
@@ -94,6 +119,10 @@ export default class Repository {
         memo[row.id] = memo[row.id] || {
           ..._.pick(row, handoffColumns),
           comments: {}
+        }
+
+        if (row['tags']) {
+          memo[row.id].tags = this.bp.database.json.get(row.tags)
         }
 
         if (row[`${commentPrefix}:id`]) {
@@ -270,11 +299,12 @@ export default class Repository {
   }
 
   // This returns an agent with the following additional properties:
+  // TODO replace this with get agent
   // - isSuperAdmin
   // - permissions
   // - strategyType
   getCurrentAgent = async (req: BPRequest, botId: string, agentId: string): Promise<IAgent> => {
-    const { data } = await axios.get('/auth/me/profile', {
+    const { data } = await axios.get('/admin/user/profile', {
       baseURL: `${process.LOCAL_URL}/api/v1`,
       headers: {
         Authorization: req.headers.authorization,
@@ -283,31 +313,66 @@ export default class Repository {
     })
 
     return {
-      ...data.payload,
       agentId,
-      online: await this.getAgentOnline(botId, agentId)
+      online: await this.getAgentOnline(botId, agentId),
+      attributes: data.payload
     } as IAgent
   }
 
-  listAgents = async (botId: string, workspace: string): Promise<Partial<IAgent>[]> => {
+  /**
+   * List all agents across workspaces and bots
+   */
+  listAllAgents = async () => {
+    // TODO move this in workspace service
+    const list = () => {
+      return this.bp.ghost.forGlobal().readFileAsObject<Workspace[]>('/', 'workspaces.json')
+    }
+
+    return Promise.map(list(), workspace => {
+      return this.listAgents(workspace.id)
+    }).then(collection =>
+      _(collection)
+        .flatten()
+        .uniqBy('agentId')
+        .value()
+    )
+  }
+
+  /**
+   * List all agents for a given bot and workspace
+   */
+  listAgents = async (workspace: string): Promise<Omit<IAgent, 'online'>[]> => {
     const options: sdk.GetWorkspaceUsersOptions = {
       includeSuperAdmins: true,
-      attributes: ['firstname', 'lastname', 'created_at', 'updated_at']
+      attributes: ['firstname', 'lastname', 'picture_url', 'created_at', 'updated_at']
     }
 
     // TODO filter out properly this is a quick fix
     const users = (await this.bp.workspaces.getWorkspaceUsers(workspace, options)).filter(
       u => u.role === 'admin' || u.role === 'agent'
-    )
-    // @ts-ignore
+    ) as sdk.WorkspaceUserWithAttributes[]
+
     return Promise.map(users, async user => {
       const agentId = makeAgentId(user.strategy, user.email)
-      return {
+      const agent = {
         ...user,
-        agentId,
-        online: await this.getAgentOnline(botId, agentId)
+        agentId
       }
+      this.agentCache[agentId] = agent
+      return agent
     })
+  }
+
+  async getAgent(agentId: string): Promise<Omit<IAgent, 'online'>> {
+    if (!this.agentCache[agentId]) {
+      //temp hack because there is no get user in the workspace sdk
+      // it'll cache all agents in all workspaces
+      await this.listAllAgents()
+    }
+    if (!this.agentCache[agentId]) {
+      throw Error('Agent does not exist')
+    }
+    return this.agentCache[agentId]
   }
 
   listHandoffs(
@@ -405,12 +470,13 @@ export default class Repository {
       .select('*')
       .where({ id })
       .limit(1)
+      .then(this.hydrateHandoffs.bind(this))
       .then(data => _.head(data))
   }
 
   createHandoff = async (botId: string, attributes: Partial<IHandoff>) => {
     const now = new Date()
-    const payload = this.castDate(
+    const payload = this.serializeDate(
       {
         ...attributes,
         botId,
@@ -428,13 +494,13 @@ export default class Repository {
 
   updateHandoff = async (botId: string, id: string, attributes: Partial<IHandoff>) => {
     const now = new Date()
-    const payload = this.castDate(
-      {
-        ...attributes,
-        updatedAt: now
-      },
-      ['assignedAt', 'resolvedAt', 'updatedAt']
-    )
+    const payload = _.flow(
+      attrs => this.serializeDate(attrs, ['assignedAt', 'resolvedAt', 'updatedAt']),
+      attrs => this.serializeJson(attrs, ['tags'])
+    )({
+      ...attributes,
+      updatedAt: now
+    })
 
     return this.bp.database.transaction(async trx => {
       await trx<IHandoff>(HANDOFF_TABLE_NAME)
@@ -446,7 +512,7 @@ export default class Repository {
 
   createComment = (attributes: Partial<IComment>) => {
     const now = new Date()
-    const payload = this.castDate(
+    const payload = this.serializeDate(
       {
         ...attributes,
         updatedAt: now,
@@ -461,7 +527,92 @@ export default class Repository {
   listMessages = (botId: string, threadId: string, conditions: CollectionConditions = {}) => {
     return this.bp.events.findEvents(
       { botId, threadId },
-      { count: conditions.limit, sortOrder: [{ column: 'id', desc: true }] }
+      { count: conditions.limit, sortOrder: [{ column: 'createdOn', desc: true }] }
     )
   }
+
+  //===================================
+  // Copy pasted from channel-web db.ts
+  //===================================
+
+  async mapVisitor(botId: string, visitorId: string) {
+    const userMapping = await this.getMappingFromVisitor(botId, visitorId)
+    let userId = userMapping?.userId
+
+    const createUserAndMapping = async () => {
+      userId = (await this.bp.messaging.forBot(botId).createUser()).id
+      await this.createUserMapping(botId, visitorId, userId)
+    }
+
+    if (!userMapping) {
+      await createUserAndMapping()
+    } else {
+      // Prevents issues when switching between different Messaging servers
+      // TODO: Remove this check once the 'web_user_map' table is removed
+      if (!(await this.checkUserExist(botId, userMapping.userId))) {
+        await this.deleteMappingFromVisitor(botId, visitorId)
+        await createUserAndMapping()
+      }
+    }
+
+    return userId
+  }
+
+  async getMappingFromVisitor(botId: string, visitorId: string): Promise<UserMapping | undefined> {
+    const cached = this.cacheByVisitor.get(`${botId}_${visitorId}`)
+    if (cached) {
+      return cached
+    }
+
+    try {
+      const rows = await this.bp.database('web_user_map').where({ botId, visitorId })
+
+      if (rows?.length) {
+        const mapping = rows[0] as UserMapping
+        this.cacheByVisitor.set(`${botId}_${visitorId}`, mapping)
+        return mapping
+      }
+    } catch (err) {
+      this.bp.logger.error('An error occurred while fetching a visitor mapping.', err)
+
+      return undefined
+    }
+  }
+
+  async deleteMappingFromVisitor(botId: string, visitorId: string): Promise<void> {
+    try {
+      this.cacheByVisitor.del(`${botId}_${visitorId}`)
+      await this.bp
+        .database('web_user_map')
+        .where({ botId, visitorId })
+        .delete()
+    } catch (err) {
+      this.bp.logger.error('An error occurred while deleting a visitor mapping.', err)
+    }
+  }
+
+  async createUserMapping(botId: string, visitorId: string, userId: string): Promise<UserMapping> {
+    const mapping = { botId, visitorId, userId }
+
+    try {
+      await this.bp.database('web_user_map').insert(mapping)
+      this.cacheByVisitor.set(`${botId}_${visitorId}`, mapping)
+
+      return mapping
+    } catch (err) {
+      this.bp.logger.error('An error occurred while creating a user mapping.', err)
+
+      return undefined
+    }
+  }
+
+  private async checkUserExist(botId: string, userId: string): Promise<boolean> {
+    const user = await this.bp.messaging.forBot(botId).getUser(userId)
+
+    return user?.id === userId
+  }
+
+  //===================================
+  // Copy pasted from channel-web db.ts
+  //===================================
 }

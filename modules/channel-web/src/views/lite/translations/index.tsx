@@ -5,6 +5,7 @@ import localeEn from 'react-intl/locale-data/en'
 import localeEs from 'react-intl/locale-data/es'
 import localeFr from 'react-intl/locale-data/fr'
 import localeIt from 'react-intl/locale-data/it'
+import localeNl from 'react-intl/locale-data/nl'
 import localePt from 'react-intl/locale-data/pt'
 import localeRu from 'react-intl/locale-data/ru'
 import localeUk from 'react-intl/locale-data/uk'
@@ -15,20 +16,44 @@ import en from './en.json'
 import es from './es.json'
 import fr from './fr.json'
 import it from './it.json'
+import nl from './nl.json'
 import pt from './pt.json'
 import ru from './ru.json'
 import uk from './uk.json'
 
-const defaultLocale = 'en'
-const translations = { en, fr, pt, es, ar, ru, uk, de, it }
+type Locale = 'browser' | string
 
-const getUserLocale = (manualLocale?: 'browser' | string) => {
-  const code = str => str.split('-')[0]
-  const browserLocale = code(navigator.language || navigator['userLanguage'] || '')
-  const storageLocale = code(window.BP_STORAGE?.get('bp/channel-web/user-lang') || '')
-  manualLocale = code(manualLocale === 'browser' ? browserLocale : manualLocale || '')
+const DEFAULT_LOCALE = 'en'
+const STORAGE_KEY = 'bp/channel-web/user-lang'
+const translations = { en, fr, pt, es, ar, ru, uk, de, it, nl }
 
-  return translations[manualLocale] ? manualLocale : translations[storageLocale] ? storageLocale : defaultLocale
+const cleanLanguageCode = (str: string) => str.split('-')[0]
+const getNavigatorLanguage = () => cleanLanguageCode(navigator.language || navigator['userLanguage'] || '')
+const getStorageLanguage = () => cleanLanguageCode(window.BP_STORAGE?.get(STORAGE_KEY) || '')
+
+// Desired precedence
+// 1- manual locale = 'browser' : browser lang
+// 2- manual locale is supported : manual lang
+// 3- storage lang is supported : storage lang
+// 4- browser lang is supported : browser lang
+// 5- default lang
+const getUserLocale = (manualLocale: Locale = 'browser') => {
+  const browserLocale = getNavigatorLanguage()
+  if (manualLocale === 'browser' && translations[browserLocale]) {
+    return browserLocale
+  }
+
+  manualLocale = cleanLanguageCode(manualLocale)
+  if (translations[manualLocale]) {
+    return manualLocale
+  }
+
+  const storageLocale = getStorageLanguage()
+  if (translations[storageLocale]) {
+    return storageLocale
+  }
+
+  return translations[browserLocale] ? browserLocale : DEFAULT_LOCALE
 }
 
 const initializeLocale = () => {
@@ -41,8 +66,9 @@ const initializeLocale = () => {
     ...localeRu,
     ...localeUk,
     ...localeDe,
-    ...localeIt
+    ...localeIt,
+    ...localeNl
   ])
 }
 
-export { initializeLocale, translations, defaultLocale, getUserLocale }
+export { initializeLocale, translations, DEFAULT_LOCALE as defaultLocale, getUserLocale }

@@ -1,4 +1,5 @@
 import classnames from 'classnames'
+import debounce from 'lodash/debounce'
 import set from 'lodash/set'
 import { observe } from 'mobx'
 import { inject, observer } from 'mobx-react'
@@ -7,25 +8,25 @@ import React from 'react'
 import { injectIntl } from 'react-intl'
 
 import Container from './components/Container'
+import OverridableComponent from './components/OverridableComponent'
 import Stylesheet from './components/Stylesheet'
 import constants from './core/constants'
 import BpSocket from './core/socket'
 import ChatIcon from './icons/Chat'
 import { RootStore, StoreDef } from './store'
-import { Config, Message } from './typings'
+import { Config, Message, Overrides, uuid } from './typings'
 import { checkLocationOrigin, initializeAnalytics, isIE, trackMessage, trackWebchatState } from './utils'
 
-const _values = obj => Object.keys(obj).map(x => obj[x])
+const _values = (obj: Overrides) => Object.keys(obj).map(x => obj[x])
 
 class Web extends React.Component<MainProps> {
   private config: Config
   private socket: BpSocket
   private parentClass: string
   private hasBeenInitialized: boolean = false
-
-  state = {
-    played: false
-  }
+  private audio: HTMLAudioElement
+  private lastMessageId: uuid
+  private cssLoaded: boolean = false
 
   constructor(props) {
     super(props)
@@ -35,6 +36,7 @@ class Web extends React.Component<MainProps> {
   }
 
   async componentDidMount() {
+    this.audio = new Audio(`${window.ROOT_PATH}/assets/modules/channel-web/notification.mp3`)
     this.props.store.setIntlProvider(this.props.intl)
     window.store = this.props.store
 
@@ -51,7 +53,7 @@ class Web extends React.Component<MainProps> {
       }
     })
 
-    await this.initialize()
+    await this.load()
     await this.initializeIfChatDisplayed()
 
     this.props.setLoadingCompleted()
@@ -62,8 +64,10 @@ class Web extends React.Component<MainProps> {
   }
 
   componentDidUpdate() {
-    // tslint:disable-next-line: no-floating-promises
-    this.initializeIfChatDisplayed()
+    if (this.config) {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      this.initializeIfChatDisplayed()
+    }
   }
 
   async initializeIfChatDisplayed() {
@@ -83,7 +87,7 @@ class Web extends React.Component<MainProps> {
     }
   }
 
-  async initialize() {
+  async load() {
     this.config = this.extractConfig()
 
     if (this.config.exposeStore) {
@@ -110,11 +114,18 @@ class Web extends React.Component<MainProps> {
     window.parent?.postMessage({ type, value, chatId: this.config.chatId }, '*')
   }
 
-  extractConfig() {
+  extractConfig(): Config {
+    const decodeIfRequired = (options: string) => {
+      try {
+        return decodeURIComponent(options)
+      } catch {
+        return options
+      }
+    }
     const { options, ref } = queryString.parse(location.search)
-    const { config } = JSON.parse(decodeURIComponent(options || '{}'))
+    const { config } = JSON.parse(decodeIfRequired(options || '{}'))
 
-    const userConfig = Object.assign({}, constants.DEFAULT_CONFIG, config)
+    const userConfig: Config = Object.assign({}, constants.DEFAULT_CONFIG, config)
     userConfig.reference = config.ref || ref
 
     this.props.updateConfig(userConfig, this.props.bp)
@@ -124,18 +135,20 @@ class Web extends React.Component<MainProps> {
 
   async initializeSocket() {
     this.socket = new BpSocket(this.props.bp, this.config)
+    this.socket.onClear = this.handleClearMessages
     this.socket.onMessage = this.handleNewMessage
     this.socket.onTyping = this.handleTyping
     this.socket.onData = this.handleDataMessage
-    this.socket.onUserIdChanged = this.props.setUserId
 
-    this.config.userId && this.socket.changeUserId(this.config.userId)
-
-    this.socket.setup()
+    this.socket.setup(this.config.userId)
     await this.socket.waitForUserId()
+
+    if (this.config.userId) {
+      await this.props.setCustomUserId(this.config.userId)
+    }
   }
 
-  loadOverrides(overrides) {
+  loadOverrides(overrides: Overrides) {
     try {
       for (const override of _values(overrides)) {
         override.map(({ module }) => this.props.bp.loadModuleView(module, true))
@@ -147,14 +160,11 @@ class Web extends React.Component<MainProps> {
 
   setupObserver() {
     observe(this.props.config, 'userId', async data => {
-      if (!data.oldValue || data.oldValue === data.newValue) {
+      if (data.oldValue === data.newValue) {
         return
       }
 
-      await this.socket.changeUserId(data.newValue)
-      await this.socket.setup()
-      await this.socket.waitForUserId()
-      await this.props.initializeChat()
+      await this.props.setCustomUserId(data.newValue)
     })
 
     observe(this.props.config, 'overrides', data => {
@@ -170,6 +180,10 @@ class Web extends React.Component<MainProps> {
     })
   }
 
+  isCurrentConversation = (event: Message) => {
+    return !this.props.config?.conversationId || this.props.config.conversationId === event.conversationId
+  }
+
   handleIframeApi = async ({ data: { action, payload } }) => {
     if (action === 'configure') {
       this.props.updateConfig(Object.assign({}, constants.DEFAULT_CONFIG, payload))
@@ -177,6 +191,17 @@ class Web extends React.Component<MainProps> {
       this.props.mergeConfig(payload)
     } else if (action === 'sendPayload') {
       await this.props.sendData(payload)
+    } else if (action === 'change-user-id') {
+      await this.props.setCustomUserId(payload)
+    } else if (action === 'new-session') {
+      // To create a new session, we change the socket user and re-initialize
+      // the connection like if it was the first time using the webchat
+      this.props.resetConversation()
+
+      this.socket.newUserId()
+      await this.socket.waitForUserId()
+
+      await this.props.initializeChat()
     } else if (action === 'event') {
       const { type, text } = payload
 
@@ -192,6 +217,8 @@ class Web extends React.Component<MainProps> {
       } else if (type === 'message') {
         trackMessage('sent')
         await this.props.sendMessage(text)
+      } else if (type === 'loadConversation') {
+        await this.props.store.fetchConversation(payload.conversationId)
       } else if (type === 'toggleBotInfo') {
         this.props.toggleBotInfo()
       } else {
@@ -200,13 +227,19 @@ class Web extends React.Component<MainProps> {
     }
   }
 
-  handleNewMessage = async event => {
-    if (event.payload?.type === 'visit' || event.message_type === 'visit') {
+  handleClearMessages = (event: Message) => {
+    if (this.isCurrentConversation(event)) {
+      this.props.clearMessages()
+    }
+  }
+
+  handleNewMessage = async (event: Message) => {
+    if (event.payload?.type === 'visit') {
       // don't do anything, it's the system message
       return
     }
 
-    if (this.props.config.conversationId && Number(this.props.config.conversationId) !== Number(event.conversationId)) {
+    if (!this.isCurrentConversation(event)) {
       // don't do anything, it's a message from another conversation
       return
     }
@@ -221,10 +254,15 @@ class Web extends React.Component<MainProps> {
     }
 
     this.handleResetUnreadCount()
+
+    if (!['session_reset'].includes(event.payload.type) && event.id !== this.lastMessageId) {
+      this.lastMessageId = event.id
+      await this.props.store.loadEventInDebugger(event.id)
+    }
   }
 
   handleTyping = async (event: Message) => {
-    if (this.props.config.conversationId && Number(this.props.config.conversationId) !== Number(event.conversationId)) {
+    if (!this.isCurrentConversation(event)) {
       // don't do anything, it's a message from another conversation
       return
     }
@@ -232,7 +270,7 @@ class Web extends React.Component<MainProps> {
     await this.props.updateTyping(event)
   }
 
-  handleDataMessage = event => {
+  handleDataMessage = (event: Message) => {
     if (!event || !event.payload) {
       return
     }
@@ -245,20 +283,19 @@ class Web extends React.Component<MainProps> {
     this.props.updateBotUILanguage(language)
   }
 
-  async playSound() {
-    if (this.state.played) {
+  playSound = debounce(async () => {
+    // Preference for config object
+    const disableNotificationSound =
+      this.config.disableNotificationSound === undefined
+        ? this.props.config.disableNotificationSound
+        : this.config.disableNotificationSound
+
+    if (disableNotificationSound || this.audio.readyState < 2) {
       return
     }
 
-    const audio = new Audio(`${window.ROOT_PATH}/assets/modules/channel-web/notification.mp3`)
-    await audio.play()
-
-    this.setState({ played: true })
-
-    setTimeout(() => {
-      this.setState({ played: false })
-    }, constants.MIN_TIME_BETWEEN_SOUNDS)
-  }
+    await this.audio.play()
+  }, constants.MIN_TIME_BETWEEN_SOUNDS)
 
   isLazySocket() {
     if (this.config.lazySocket !== undefined) {
@@ -308,7 +345,12 @@ class Web extends React.Component<MainProps> {
     return (
       <React.Fragment>
         {!!stylesheet?.length && <Stylesheet href={stylesheet} />}
-        {!stylesheet && <Stylesheet href={`assets/modules/channel-web/default${isEmulator ? '-emulator' : ''}.css`} />}
+        {!stylesheet && (
+          <Stylesheet
+            href={`assets/modules/channel-web/default${isEmulator ? '-emulator' : ''}.css`}
+            onLoad={() => (this.cssLoaded = true)}
+          />
+        )}
         {!isIE && <Stylesheet href={'assets/modules/channel-web/font.css'} />}
         {!!extraStylesheet?.length && <Stylesheet href={extraStylesheet} />}
       </React.Fragment>
@@ -323,12 +365,16 @@ class Web extends React.Component<MainProps> {
     return (
       <div onFocus={this.handleResetUnreadCount}>
         {this.applyAndRenderStyle()}
-        <h1 id="tchat-label" className="sr-only" tabIndex={-1}>
-          {this.props.intl.formatMessage({
-            id: 'widget.title',
-            defaultMessage: 'Chat window'
-          })}
-        </h1>
+
+        {this.cssLoaded && (
+          <h1 id="tchat-label" className="sr-only" tabIndex={-1}>
+            {this.props.intl.formatMessage({
+              id: 'widget.title',
+              defaultMessage: 'Chat window'
+            })}
+          </h1>
+        )}
+        <OverridableComponent name={'before_widget'} original={null} />
         {this.props.displayWidgetView ? this.renderWidget() : <Container />}
       </div>
     )
@@ -345,7 +391,7 @@ export default inject(({ store }: { store: RootStore }) => ({
   updateConfig: store.updateConfig,
   mergeConfig: store.mergeConfig,
   addEventToConversation: store.addEventToConversation,
-  setUserId: store.setUserId,
+  clearMessages: store.clearMessages,
   updateTyping: store.updateTyping,
   sendMessage: store.sendMessage,
   setReference: store.setReference,
@@ -366,7 +412,9 @@ export default inject(({ store }: { store: RootStore }) => ({
   widgetTransition: store.view.widgetTransition,
   displayWidgetView: store.view.displayWidgetView,
   setLoadingCompleted: store.view.setLoadingCompleted,
-  sendFeedback: store.sendFeedback
+  sendFeedback: store.sendFeedback,
+  setCustomUserId: store.setCustomUserId,
+  resetConversation: store.resetConversation
 }))(injectIntl(observer(Web)))
 
 type MainProps = { store: RootStore } & Pick<
@@ -377,7 +425,6 @@ type MainProps = { store: RootStore } & Pick<
   | 'botInfo'
   | 'fetchBotInfo'
   | 'sendMessage'
-  | 'setUserId'
   | 'sendData'
   | 'intl'
   | 'isEmulator'
@@ -394,6 +441,7 @@ type MainProps = { store: RootStore } & Pick<
   | 'hasUnreadMessages'
   | 'showWidgetButton'
   | 'addEventToConversation'
+  | 'clearMessages'
   | 'updateConfig'
   | 'mergeConfig'
   | 'isWebchatReady'
@@ -402,4 +450,6 @@ type MainProps = { store: RootStore } & Pick<
   | 'resetUnread'
   | 'setLoadingCompleted'
   | 'dimensions'
+  | 'setCustomUserId'
+  | 'resetConversation'
 >

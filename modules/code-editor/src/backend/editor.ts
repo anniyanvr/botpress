@@ -17,8 +17,6 @@ import {
   RAW_TYPE
 } from './utils'
 
-export const FILENAME_REGEX = /^[0-9a-zA-Z_\-.]+$/
-
 const RAW_FILES_FILTERS = ['**/*.map', 'modules/.cache/**/*', 'modules/*.cache', 'modules/*.temp_cache']
 
 export default class Editor {
@@ -97,17 +95,22 @@ export default class Editor {
 
   async loadFiles(fileTypeId: string, botId?: string, listBuiltin?: boolean): Promise<EditableFile[]> {
     const def: FileDefinition = FileTypes[fileTypeId]
-    const { baseDir, dirListingAddFields } = def.ghost
+    const { baseDir, dirListingAddFields, dirListingExcluded } = def.ghost
 
     if ((!def.allowGlobal && !botId) || (!def.allowScoped && botId)) {
       return []
     }
 
-    const excluded = this._config.includeBuiltin || listBuiltin ? undefined : getBuiltinExclusion()
+    let fileExt = '*.*'
+    if (def.isJSON !== undefined) {
+      fileExt = def.isJSON ? '*.json' : '*.js'
+    }
+
+    const baseExcluded = this._config.includeBuiltin || listBuiltin ? [] : getBuiltinExclusion()
+    const excluded = [...baseExcluded, ...(dirListingExcluded ?? [])]
+
     const ghost = botId ? this.bp.ghost.forBot(botId) : this.bp.ghost.forGlobal()
-    const files = def.filenames
-      ? def.filenames
-      : await ghost.directoryListing(baseDir, def.isJSON ? '*.json' : '*.js', excluded, true)
+    const files = def.filenames ? def.filenames : await ghost.directoryListing(baseDir, fileExt, excluded, true)
 
     return Promise.map(files, async (filepath: string) => ({
       name: path.basename(filepath),
@@ -156,9 +159,7 @@ export default class Editor {
   }
 
   async renameFile(file: EditableFile, newName: string): Promise<void> {
-    if (file.type !== RAW_TYPE) {
-      assertValidFilename(newName)
-    }
+    assertValidFilename(newName)
 
     const { folder, filename } = getFileLocation(file)
     const newFilename = filename.replace(filename, newName)

@@ -9,10 +9,13 @@
     "unassigned": "Non-assigné",
     "assignedMe": "Assigné à moi",
     "assignedOther": "Assigné à d'autres",
-    "resolved": "Résolue"
+    "resolved": "Résolue",
+    "rejected": "Rejeté",
+    "expired": "Expiré"
   },
   "sortBy": "Trier Par",
   "filterBy": "Filtrer Par",
+  "newMessage": "Nouveau Message",
   "agent": {
     "status": "Status: {status}",
     "name": "Nom: {name}",
@@ -29,7 +32,9 @@
     "status": {
       "pending": "en attente",
       "assigned": "assignée",
-      "resolved": "résolue"
+      "resolved": "résolue",
+      "rejected": "rejeté",
+      "expired": "expiré"
     },
     "assignedToAgent": "Vous avez été assigné à un agent",
     "assignedToYou": "La conversation vous a été assigné",
@@ -37,6 +42,7 @@
     "resolve": "Résoudre",
     "assigned": "L'escalation {id} a été assignée avec succès",
     "resolved": "L'escalation {id} a été résoulue avec succès",
+    "rejected": "L'escalation {id} a été rejeté avec succès",
     "noPreviousAgent": "Aucun agent précédent",
     "you": "Vous",
     "from": "Via {channel}"
@@ -59,9 +65,12 @@
     "empty": "Aucun commentaires"
   },
   "conversation": {
+    "delete": "Supprimer la conversation",
+    "deleted": "La conversation a été supprimée avec succès",
     "empty": "Sélectionnez une escalation en attente pour engager la conversation avec vos clients.",
     "tab": "Conversation",
-    "composerPlaceholder": "Répondre à l'utilisateur"
+    "composerPlaceholder": "Répondre à l'utilisateur",
+    "send": "Envoyer"
   },
   "handoffs": {
     "empty": "Il n'y a présentement aucune escalation grâce à vous et votre équipe."
@@ -77,5 +86,11 @@
       "heading": "Escalations Récentes",
       "empty": "Il n'y a présentement aucune escalation grâce à vous et votre équipe."
     }
+  },
+  "tags": {
+    "heading": "Étiquettes d'escalation",
+    "empty": "Les étiquettes ne sont pas activées pour ce bot.",
+    "placeholder": "Ajoutez ou suprimmez des étiquettes",
+    "noResults": "Aucun résultat."
   }
 }

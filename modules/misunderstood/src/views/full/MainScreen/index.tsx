@@ -1,4 +1,3 @@
-import { AxiosStatic } from 'axios'
 import { lang } from 'botpress/shared'
 import React from 'react'
 
@@ -23,7 +22,8 @@ const MainScreen = ({
   undeleteEvent,
   resetPendingEvent,
   amendEvent,
-  applyAllPending
+  applyAllPending,
+  manyEventsSelected
 }) => {
   if (selectedStatus === FLAGGED_MESSAGE_STATUS.deleted) {
     return <DeletedList events={events} totalEventsCount={totalEventsCount} undeleteEvent={undeleteEvent} />
@@ -57,6 +57,7 @@ const MainScreen = ({
       skipEvent={skipEvent}
       deleteEvent={deleteEvent}
       amendEvent={amendEvent}
+      manyEventsSelected={manyEventsSelected}
     />
   )
 }

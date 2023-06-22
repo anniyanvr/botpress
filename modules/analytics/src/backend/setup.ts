@@ -34,17 +34,17 @@ export default async (bp: typeof sdk, db: Database, interactionsToTrack: string[
     db.incrementMetric(botId, channel, 'workflow_failed_count', removeExt(wfName))
   })
 
-  process.BOTPRESS_EVENTS.on('bp_core_feedback_positive', ({ channel, botId, type }) => {
+  process.BOTPRESS_EVENTS.on('bp_core_feedback_positive', ({ channel, botId, type, details }) => {
     if (type === 'qna') {
-      db.incrementMetric(botId, channel, 'feedback_positive_qna')
+      db.incrementMetric(botId, channel, 'feedback_positive_qna', details)
     } else if (type === 'workflow') {
       db.incrementMetric(botId, channel, 'feedback_positive_workflow')
     }
   })
 
-  process.BOTPRESS_EVENTS.on('bp_core_feedback_negative', ({ channel, botId, type }) => {
+  process.BOTPRESS_EVENTS.on('bp_core_feedback_negative', ({ channel, botId, type, details }) => {
     if (type === 'qna') {
-      db.incrementMetric(botId, channel, 'feedback_negative_qna')
+      db.incrementMetric(botId, channel, 'feedback_negative_qna', details)
     } else if (type === 'workflow') {
       db.incrementMetric(botId, channel, 'feedback_negative_workflow')
     }
@@ -72,6 +72,11 @@ export default async (bp: typeof sdk, db: Database, interactionsToTrack: string[
     }
 
     db.incrementMetric(event.botId, event.channel, 'msg_received_count')
+
+    // quick replies aren't counted as misunderstood
+    if (event.type === 'quick_reply') {
+      return next()
+    }
 
     // misunderstood messages
     const intentName = event?.nlu?.intent?.name

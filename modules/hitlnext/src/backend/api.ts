@@ -1,4 +1,5 @@
 import Axios from 'axios'
+import Bluebird from 'bluebird'
 import * as sdk from 'botpress/sdk'
 import { BPRequest } from 'common/http'
 import { RequestWithUser } from 'common/typings'
@@ -6,13 +7,16 @@ import { Request, Response } from 'express'
 import Joi from 'joi'
 import _ from 'lodash'
 
+import { Config } from '../config'
 import { MODULE_NAME } from '../constants'
+import { agentName } from '../helper'
 
-import { HandoffType, IAgent, IComment, IHandoff } from './../types'
-import { UnprocessableEntityError } from './errors'
-import { extendAgentSession, formatValidationError, makeAgentId } from './helpers'
 import { StateType } from './index'
+import { HandoffStatus, IAgent, IComment, IHandoff } from './../types'
+import { UnprocessableEntityError, UnauthorizedError } from './errors'
+import { extendAgentSession, formatValidationError, makeAgentId } from './helpers'
 import Repository, { CollectionConditions } from './repository'
+import Service, { toEventDestination } from './service'
 import Socket from './socket'
 import {
   AgentOnlineValidation,
@@ -20,22 +24,26 @@ import {
   CreateCommentSchema,
   CreateHandoffSchema,
   ResolveHandoffSchema,
+  UpdateHandoffSchema,
   validateHandoffStatusRule
 } from './validation'
 
-export default async (bp: typeof sdk, state: StateType) => {
+type HITLBPRequest = BPRequest & { agentId: string | undefined }
+
+export default async (bp: typeof sdk, state: StateType, repository: Repository) => {
   const router = bp.http.createRouterForBot(MODULE_NAME)
-  const repository = new Repository(bp, state.timeouts)
   const realtime = Socket(bp)
+  const service = new Service(bp, state, repository, realtime)
 
   // Enforces for an agent to be 'online' before executing an action
-  const agentOnlineMiddleware = async (req: BPRequest, res: Response, next) => {
+  const agentOnlineMiddleware = async (req: HITLBPRequest, res: Response, next) => {
     const { email, strategy } = req.tokenUser!
     const agentId = makeAgentId(strategy, email)
     const online = await repository.getAgentOnline(req.params.botId, agentId)
 
     try {
       Joi.attempt({ online }, AgentOnlineValidation)
+      req.agentId = agentId
     } catch (err) {
       if (err instanceof Joi.ValidationError) {
         return next(new UnprocessableEntityError(formatValidationError(err)))
@@ -47,12 +55,30 @@ export default async (bp: typeof sdk, state: StateType) => {
     next()
   }
 
+  const hasPermission = (type: string, actionType: 'read' | 'write') => async (
+    req: HITLBPRequest,
+    res: Response,
+    next
+  ) => {
+    const hasPermission = await bp.http.hasPermission(req, actionType, `module.hitlnext.${type}`, true)
+
+    if (hasPermission) {
+      return next()
+    }
+
+    return next(
+      new UnauthorizedError(
+        `user does not have sufficient permissions to "${actionType}" on resource "module.hitlnext.${type}"`
+      )
+    )
+  }
+
   // Catches exceptions and handles those that are expected
   const errorMiddleware = fn => {
     return (req: BPRequest, res: Response, next) => {
       Promise.resolve(fn(req as BPRequest, res, next)).catch(err => {
         if (err instanceof Joi.ValidationError) {
-          throw new UnprocessableEntityError(formatValidationError(err))
+          next(new UnprocessableEntityError(formatValidationError(err)))
         } else {
           next(err)
         }
@@ -83,7 +109,15 @@ export default async (bp: typeof sdk, state: StateType) => {
   router.get(
     '/agents',
     errorMiddleware(async (req: RequestWithUser, res: Response) => {
-      const agents = await repository.listAgents(req.params.botId, req.workspace)
+      const agents = await repository.listAgents(req.workspace).then(agents => {
+        return Promise.map(agents, async agent => {
+          return {
+            ...agent,
+            online: await repository.getAgentOnline(req.params.botId, agent.agentId)
+          }
+        })
+      })
+
       res.send(agents)
     })
   )
@@ -104,7 +138,7 @@ export default async (bp: typeof sdk, state: StateType) => {
 
       const payload: Pick<IAgent, 'online'> = { online }
 
-      realtime.sendPayload(req.params.botId, {
+      service.sendPayload(req.params.botId, {
         resource: 'agent',
         type: 'update',
         id: agentId,
@@ -131,7 +165,7 @@ export default async (bp: typeof sdk, state: StateType) => {
     errorMiddleware(async (req: Request, res: Response) => {
       const payload: Pick<IHandoff, 'userId' | 'userThreadId' | 'userChannel' | 'status'> = {
         ..._.pick(req.body, ['userId', 'userThreadId', 'userChannel']),
-        status: <HandoffType>'pending'
+        status: <HandoffStatus>'pending'
       }
 
       Joi.attempt(payload, CreateHandoffSchema)
@@ -148,35 +182,32 @@ export default async (bp: typeof sdk, state: StateType) => {
         return res.sendStatus(200)
       }
 
-      const handoff = await repository.createHandoff(req.params.botId, payload).then(handoff => {
-        state.cacheHandoff(req.params.botId, handoff.userThreadId, handoff)
-        return handoff
-      })
+      const handoff = await service.createHandoff(req.params.botId, payload, req.body.timeoutDelay)
 
-      const eventDestination = {
-        botId: req.params.botId,
-        target: handoff.userId,
-        threadId: handoff.userThreadId,
-        channel: handoff.userChannel
+      res.status(201).send(handoff)
+    })
+  )
+
+  router.post(
+    '/handoffs/:id',
+    errorMiddleware(async (req: Request, res: Response) => {
+      const { botId, id } = req.params
+      const payload: Pick<IHandoff, 'tags'> = {
+        ..._.pick(req.body, ['tags'])
       }
 
-      bp.events.replyToEvent(
-        eventDestination,
-        await bp.cms.renderElement(
-          'builtin_text',
-          { type: 'text', text: 'You are being transfered to an agent.' },
-          eventDestination
-        )
-      )
+      Joi.attempt(payload, UpdateHandoffSchema)
 
-      realtime.sendPayload(req.params.botId, {
+      const handoff = await service.updateHandoff(id, botId, payload)
+
+      service.sendPayload(botId, {
         resource: 'handoff',
-        type: 'create',
+        type: 'update',
         id: handoff.id,
         payload: handoff
       })
 
-      res.status(201).send(handoff)
+      res.send(handoff)
     })
   )
 
@@ -188,12 +219,14 @@ export default async (bp: typeof sdk, state: StateType) => {
       const { email, strategy } = req.tokenUser!
 
       const agentId = makeAgentId(strategy, email)
+      const agent = await repository.getCurrentAgent(req as BPRequest, req.params.botId, agentId)
 
       let handoff = await repository.findHandoff(req.params.botId, req.params.id)
 
-      const axioxconfig = await bp.http.getAxiosConfigForBot(botId, { localUrl: true })
-      const { data } = await Axios.post(`/mod/channel-web/conversations/${agentId}/new`, {}, axioxconfig)
-      const agentThreadId = data.convoId.toString()
+      const userId = await repository.mapVisitor(botId, agentId)
+      const conversation = await bp.messaging.forBot(botId).createConversation(userId)
+
+      const agentThreadId = conversation.id
       const payload: Pick<IHandoff, 'agentId' | 'agentThreadId' | 'assignedAt' | 'status'> = {
         agentId,
         agentThreadId,
@@ -213,51 +246,59 @@ export default async (bp: typeof sdk, state: StateType) => {
 
       await extendAgentSession(repository, realtime, req.params.botId, agentId)
 
-      const baseCustomEventPayload: Partial<sdk.IO.EventCtorArgs> = {
-        botId: handoff.botId,
-        direction: 'outgoing',
-        type: 'custom',
-        payload: {
-          type: 'custom',
-          module: MODULE_NAME
-        }
+      const configs: Config = await bp.config.getModuleConfigForBot(MODULE_NAME, req.params.botId)
+
+      if (configs.assignMessage) {
+        const attributes = await bp.users.getAttributes(handoff.userChannel, handoff.userId)
+        const language = attributes.language
+
+        const eventDestination = toEventDestination(req.params.botId, handoff)
+
+        await service.sendMessageToUser(configs.assignMessage, eventDestination, language, {
+          agentName: agentName(agent)
+        })
       }
 
-      // custom event to user
-      await bp.events.sendEvent(
-        bp.IO.Event(
-          _.merge(_.cloneDeep(baseCustomEventPayload), {
-            target: handoff.userId,
-            threadId: handoff.userThreadId,
-            channel: handoff.userChannel,
-            payload: { from: 'bot', component: 'HandoffAssignedForUser' }
-          }) as sdk.IO.EventCtorArgs
-        )
-      )
-
-      const recentEvents = await bp.events.findEvents(
+      // TODO replace this by messaging api once all channels have been ported
+      const recentUserConversationEvents = await bp.events.findEvents(
         { botId, threadId: handoff.userThreadId },
         { count: 10, sortOrder: [{ column: 'id', desc: true }] }
       )
 
-      // custom event to agent
+      const baseEvent: Partial<sdk.IO.EventCtorArgs> = {
+        direction: 'outgoing',
+        channel: 'web',
+        botId: handoff.botId,
+        target: userId,
+        threadId: handoff.agentThreadId
+      }
+
+      await Promise.mapSeries(recentUserConversationEvents.reverse(), async event => {
+        await bp.messaging
+          .forBot(handoff.botId)
+          .createMessage(
+            handoff.agentThreadId,
+            event.direction === 'incoming' ? undefined : event.target,
+            event.event.payload
+          )
+        await Bluebird.delay(5)
+      })
+
       await bp.events.sendEvent(
-        bp.IO.Event(
-          _.merge(_.cloneDeep(baseCustomEventPayload), {
-            target: handoff.agentId,
-            channel: 'web',
-            threadId: handoff.agentThreadId,
-            payload: {
-              component: 'HandoffAssignedForAgent',
-              recentEvents,
-              noBubble: true,
-              wrapped: { type: 'handoff' }
-            } // super hack to make sure wrapper use our style, don't change this until fixed properly
-          } as sdk.IO.EventCtorArgs)
-        )
+        bp.IO.Event({
+          ...baseEvent,
+          type: 'custom',
+          payload: {
+            type: 'custom',
+            module: MODULE_NAME,
+            component: 'HandoffAssignedForAgent',
+            noBubble: true,
+            wrapped: { type: 'handoff' }
+          }
+        } as sdk.IO.EventCtorArgs)
       )
 
-      realtime.sendPayload(req.params.botId, {
+      service.sendPayload(req.params.botId, {
         resource: 'handoff',
         type: 'update',
         id: handoff.id,
@@ -271,13 +312,8 @@ export default async (bp: typeof sdk, state: StateType) => {
   router.post(
     '/handoffs/:id/resolve',
     agentOnlineMiddleware,
-    errorMiddleware(async (req: RequestWithUser, res: Response) => {
-      const { email, strategy } = req.tokenUser!
-
-      const agentId = makeAgentId(strategy, email)
-
-      let handoff
-      handoff = await repository.findHandoff(req.params.botId, req.params.id)
+    errorMiddleware(async (req: HITLBPRequest, res: Response) => {
+      const handoff = await repository.findHandoff(req.params.botId, req.params.id)
 
       const payload: Pick<IHandoff, 'status' | 'resolvedAt'> = {
         status: 'resolved',
@@ -292,21 +328,39 @@ export default async (bp: typeof sdk, state: StateType) => {
         throw new UnprocessableEntityError(formatValidationError(e))
       }
 
-      handoff = await repository.updateHandoff(req.params.botId, req.params.id, payload).then(handoff => {
-        state.expireHandoff(req.params.botId, handoff.userThreadId)
-        return handoff
-      })
+      const updated = await service.resolveHandoff(handoff, req.params.botId, payload)
+      req.agentId && (await extendAgentSession(repository, realtime, req.params.botId, req.agentId))
 
-      await extendAgentSession(repository, realtime, req.params.botId, agentId)
+      res.send(updated)
+    })
+  )
 
-      realtime.sendPayload(req.params.botId, {
-        resource: 'handoff',
-        type: 'update',
-        id: handoff.id,
-        payload: handoff
-      })
+  // Resolving -> can only occur after being assigned
+  // Rejecting -> can only occur if pending or assigned
+  router.post(
+    '/handoffs/:id/reject',
+    hasPermission('reject', 'write'),
+    errorMiddleware(async (req: HITLBPRequest, res: Response) => {
+      const handoff = await repository.findHandoff(req.params.botId, req.params.id)
 
-      res.send(handoff)
+      const payload: Pick<IHandoff, 'status' | 'resolvedAt'> = {
+        status: 'rejected',
+        resolvedAt: new Date()
+      }
+
+      Joi.attempt(payload, ResolveHandoffSchema)
+
+      try {
+        validateHandoffStatusRule(handoff.status, payload.status)
+      } catch (e) {
+        throw new UnprocessableEntityError(formatValidationError(e))
+      }
+
+      // Rejecting a handoff is the same as resolving it
+      // But you can also transition from pending
+      const updated = await service.resolveHandoff(handoff, req.params.botId, payload)
+
+      res.send(updated)
     })
   )
 
@@ -330,7 +384,7 @@ export default async (bp: typeof sdk, state: StateType) => {
       const comment = await repository.createComment(payload)
       handoff.comments = [...handoff.comments, comment]
 
-      realtime.sendPayload(req.params.botId, {
+      service.sendPayload(req.params.botId, {
         resource: 'handoff',
         type: 'update',
         id: handoff.id,

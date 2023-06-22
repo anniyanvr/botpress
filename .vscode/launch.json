@@ -2,48 +2,50 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "pwa-node",
-      "runtimeVersion": "12.13.0",
+      "type": "node",
+      "runtimeVersion": "12.18.1",
       "request": "launch",
       "name": "Debug App",
-      "program": "${workspaceFolder}/out/bp/index.js",
-      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/packages/bp/dist/index.js",
+      "cwd": "${workspaceFolder}/packages/bp/dist",
       "args": ["start"],
       "env": {
         "BP_MODULES_PATH": "${workspaceFolder}/modules:${workspaceFolder}/internal-modules",
-        "NODE_PATH": "${workspaceFolder}/out/bp",
+        "NODE_PATH": "${workspaceFolder}/packages/bp/dist",
         "DEBUG": "bp:none",
         "BLUEBIRD_DEBUG": "1",
         "TELEMETRY_URL": "https://telemetry.botpress.dev/ingest"
       },
       "smartStep": true,
       "outFiles": [
-        "${workspaceFolder}/out/**/*.js",
+        "${workspaceFolder}/packages/bp/dist/**/*.js",
         "${workspaceFolder}/modules/**/dist/**/*.js",
         "${workspaceFolder}/private-modules/**/dist/**/*.js",
         "!${workspaceFolder}/**/node_modules/**/*.js"
       ],
-      "console": "integratedTerminal",
+      "skipFiles": ["**/node_modules/**", "<node_internals>/**"],
+      "console": "internalConsole",
       "sourceMaps": true,
       "autoAttachChildProcesses": true
     },
     {
       "type": "node",
-      "runtimeVersion": "12.13.0",
+      "runtimeVersion": "12.18.1",
       "request": "launch",
       "name": "Debug Stan",
-      "program": "${workspaceFolder}/out/bp/index.js",
+      "program": "${workspaceFolder}/packages/bp/dist/index.js",
       "cwd": "${workspaceFolder}",
       "args": [
         "nlu",
         "--languageURL=http://localhost:3100",
         "--ducklingURL=http://localhost:8000",
-        "--modelCacheSize=1gb"
+        "--modelCacheSize=1gb",
+        "--silent"
       ],
       "protocol": "auto",
       "env": {
         "BP_MODULES_PATH": "${workspaceFolder}/modules:${workspaceFolder}/internal-modules",
-        "NODE_PATH": "${workspaceFolder}/out/bp",
+        "NODE_PATH": "${workspaceFolder}/packages/bp/dist",
         "DEBUG": "bp:none",
         "BLUEBIRD_DEBUG": "1"
       },
@@ -90,6 +92,19 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Debug Jest Current File",
+      "program": "${workspaceFolder}/node_modules/.bin/jest",
+      "args": ["${fileBasenameNoExtension}", "--config", "jest.config.js"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "disableOptimisticBPs": true,
+      "windows": {
+        "program": "${workspaceFolder}/node_modules/jest/bin/jest"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Debug Jest Integration Tests",
       "cwd": "${workspaceFolder}",
       "env": {
@@ -124,7 +139,7 @@
         "BP_MODULES_PATH": "../../modules",
         "NODE_PATH": "./"
       },
-      "cwd": "${workspaceFolder}/out/bp"
+      "cwd": "${workspaceFolder}/packages/bp/dist"
     },
     {
       "name": "(lldb) CRFSuite ",

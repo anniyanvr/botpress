@@ -20,7 +20,7 @@ const onServerStarted = async (bp: typeof sdk) => {
 }
 
 const onServerReady = async (bp: typeof sdk) => {
-  await api(bp, db)
+  api(bp, db)
 }
 
 const onModuleUnmount = async (bp: typeof sdk) => {
@@ -39,7 +39,8 @@ const entryPoint: sdk.ModuleEntryPoint = {
     fullName: 'Analytics',
     homepage: 'https://botpress.com',
     menuIcon: 'timeline-line-chart',
-    menuText: 'Analytics'
+    menuText: 'Analytics',
+    workspaceApp: { bots: true }
   }
 }
 

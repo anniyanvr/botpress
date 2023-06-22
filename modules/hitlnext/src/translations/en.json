@@ -9,10 +9,13 @@
     "unassigned": "Unassigned",
     "assignedMe": "Assigned to Me",
     "assignedOther": "Assigned to Others",
-    "resolved": "Resolved"
+    "resolved": "Resolved",
+    "rejected": "Rejected",
+    "expired": "Expired"
   },
   "sortBy": "Sort By",
   "filterBy": "Filter By",
+  "newMessage": "New Message",
   "agent": {
     "status": "Status: {status}",
     "name": "Name: {name}",
@@ -29,7 +32,9 @@
     "status": {
       "pending": "pending",
       "assigned": "assigned",
-      "resolved": "resolved"
+      "resolved": "resolved",
+      "rejected": "rejected",
+      "expired": "expired"
     },
     "assignedToAgent": "You've been assigned to an agent",
     "assignedToYou": "Conversation Handed to You",
@@ -37,6 +42,7 @@
     "resolve": "Resolve",
     "assigned": "Handoff {id} successfully assigned",
     "resolved": "Handoff {id} successfully resolved",
+    "rejected": "Handoff {id} successfully rejected",
     "you": "You",
     "from": "From {channel}"
   },
@@ -55,12 +61,15 @@
   },
   "comments": {
     "heading": "Notes from agents",
-    "empty": "No comments"
+    "empty": "No comments yet."
   },
   "conversation": {
+    "delete": "Delete conversation",
+    "deleted": "Conversation successfully deleted",
     "empty": "Select a pending handoff to engage conversation with your clients.",
     "tab": "Conversation",
-    "composerPlaceholder": "Reply to user"
+    "composerPlaceholder": "Reply to user",
+    "send": "Send"
   },
   "handoffs": {
     "empty": "Thanks to you and your team, there are no pending handoffs right now."
@@ -76,5 +85,11 @@
       "heading": "Most Recent Handoffs",
       "empty": "Thanks to you and your team, there are no pending handoffs right now."
     }
+  },
+  "tags": {
+    "heading": "Handoff labels",
+    "empty": "Tags are not enabled for this bot.",
+    "placeholder": "Add or remove labels",
+    "noResults": "No results."
   }
 }

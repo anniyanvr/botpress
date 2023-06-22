@@ -11,15 +11,16 @@ import { getUserLocale, initializeLocale } from '../translations'
 import {
   BotInfo,
   Config,
-  ConversationSummary,
   CurrentConversation,
   EventFeedback,
   Message,
   MessageWrapper,
   QueuedMessage,
-  StudioConnector
+  RecentConversation,
+  StudioConnector,
+  uuid
 } from '../typings'
-import { downloadFile, trackMessage } from '../utils'
+import { downloadFile, isRTLLocale, trackMessage } from '../utils'
 
 import ComposerStore from './composer'
 import ViewStore from './view'
@@ -35,11 +36,11 @@ class RootStore {
   public composer: ComposerStore
   public view: ViewStore
 
-  private _typingInterval
+  private _typingInterval: ReturnType<typeof setInterval> | undefined
   private api: WebchatApi
 
   @observable
-  public conversations: ConversationSummary[] = []
+  public conversations: RecentConversation[] = []
 
   @observable
   public currentConversation: CurrentConversation
@@ -57,7 +58,7 @@ class RootStore {
   public isInitialized: boolean
 
   @observable
-  public eventFeedbacks: EventFeedback[]
+  public messageFeedbacks: EventFeedback[]
 
   public intl: InjectedIntl
 
@@ -78,7 +79,7 @@ class RootStore {
   }
 
   @action.bound
-  setIntlProvider(provider) {
+  setIntlProvider(provider: InjectedIntl) {
     this.intl = provider
   }
 
@@ -90,6 +91,11 @@ class RootStore {
   @computed
   get botName(): string {
     return this.config?.botName || this.botInfo?.name || 'Bot'
+  }
+
+  @computed
+  get alwaysScrollDownOnMessages(): boolean {
+    return this.botInfo.alwaysScrollDownOnMessages || false
   }
 
   @computed
@@ -112,6 +118,11 @@ class RootStore {
   }
 
   @computed
+  get rtl(): boolean {
+    return isRTLLocale(this.preferredLanguage)
+  }
+
+  @computed
   get escapeHTML(): boolean {
     return this.botInfo?.security?.escapeHTML
   }
@@ -122,7 +133,7 @@ class RootStore {
   }
 
   @computed
-  get currentConversationId(): number | undefined {
+  get currentConversationId(): uuid | undefined {
     return this.currentConversation?.id
   }
 
@@ -133,20 +144,50 @@ class RootStore {
   }
 
   @action.bound
-  updateMessages(messages) {
+  updateMessages(messages: Message[]) {
     this.currentConversation.messages = messages
   }
 
   @action.bound
-  async addEventToConversation(event: Message): Promise<void> {
-    if (this.isInitialized && this.currentConversationId !== Number(event.conversationId)) {
-      await this.fetchConversations()
-      await this.fetchConversation(Number(event.conversationId))
+  clearMessages() {
+    this.currentConversation.messages = []
+  }
+
+  @action.bound
+  async deleteConversation(): Promise<void> {
+    if (this.currentConversation !== undefined && this.currentConversation.messages.length > 0) {
+      await this.api.deleteMessages(this.currentConversationId)
+
+      this.clearMessages()
+    }
+  }
+
+  @action.bound
+  async loadEventInDebugger(messageId: uuid, isManual?: boolean): Promise<void> {
+    if (!this.config.isEmulator || !messageId) {
       return
     }
 
-    const message: Message = { ...event, conversationId: +event.conversationId }
-    if (this.isBotTyping.get() && !event.userId) {
+    const messages = await this.api.listByIncomingEvent(messageId)
+    this.view.setHighlightedMessages(messages)
+    window.parent.postMessage({ action: 'load-event', payload: { messageId, isManual } }, '*')
+  }
+
+  @action.bound
+  async addEventToConversation(event: Message): Promise<void> {
+    if (this.isInitialized && this.currentConversationId !== event.conversationId) {
+      await this.fetchConversations()
+      await this.fetchConversation(event.conversationId)
+      return
+    }
+
+    // Autoplay bot voice messages
+    if (event.payload?.type === 'voice' && !event.authorId) {
+      event.payload.autoPlay = true
+    }
+
+    const message: Message = { ...event, conversationId: event.conversationId }
+    if (this.isBotTyping.get() && !event.authorId) {
       this.delayedMessages.push({ message, showAt: this.currentConversation.typingUntil })
     } else {
       this.currentConversation.messages.push(message)
@@ -155,9 +196,9 @@ class RootStore {
 
   @action.bound
   async updateTyping(event: Message): Promise<void> {
-    if (this.isInitialized && this.currentConversationId !== Number(event.conversationId)) {
+    if (this.isInitialized && this.currentConversationId !== event.conversationId) {
       await this.fetchConversations()
-      await this.fetchConversation(Number(event.conversationId))
+      await this.fetchConversation(event.conversationId)
       return
     }
 
@@ -194,14 +235,20 @@ class RootStore {
     runInAction('-> setBotInfo', () => {
       this.botInfo = botInfo
     })
-    this.mergeConfig({ extraStylesheet: botInfo.extraStylesheet })
+    this.mergeConfig({
+      extraStylesheet: botInfo.extraStylesheet,
+      disableNotificationSound: botInfo.disableNotificationSound
+    })
   }
 
   @action.bound
   async fetchPreferences(): Promise<void> {
     const preferences = await this.api.fetchPreferences()
+    if (!preferences.language) {
+      return
+    }
     runInAction('-> setPreferredLanguage', () => {
-      this.preferredLanguage = preferences.language
+      this.updateBotUILanguage(preferences.language)
     })
   }
 
@@ -223,14 +270,17 @@ class RootStore {
 
   /** Fetch the specified conversation ID, or try to fetch a valid one from the list */
   @action.bound
-  async fetchConversation(convoId?: number): Promise<number> {
+  async fetchConversation(convoId?: uuid): Promise<uuid> {
     const conversationId = convoId || this._getCurrentConvoId()
     if (!conversationId) {
       return this.createConversation()
     }
 
     const conversation: CurrentConversation = await this.api.fetchConversation(convoId || this._getCurrentConvoId())
-    if (conversation?.messages) {
+    if (conversation?.messages.length) {
+      conversation.messages = conversation.messages.sort(
+        (a, b) => new Date(a.sentOn).getTime() - new Date(b.sentOn).getTime()
+      )
       await this.extractFeedback(conversation.messages)
     }
 
@@ -252,23 +302,28 @@ class RootStore {
       return
     }
 
-    await this.sendData({ type: 'text', text: userMessage })
-    trackMessage('sent')
-
-    this.composer.addMessageToHistory(userMessage)
     this.composer.updateMessage('')
+    try {
+      await this.sendData({ type: 'text', text: userMessage })
+      trackMessage('sent')
+
+      this.composer.addMessageToHistory(userMessage)
+    } catch (e) {
+      this.composer.updateMessage(userMessage)
+      throw e
+    }
   }
 
   /** Sends an event to start conversation & hide the bot info page */
   @action.bound
   async startConversation(): Promise<void> {
     await this.sendData({ type: 'request_start_conversation' })
-    await this.view.toggleBotInfo()
+    this.view.toggleBotInfo()
   }
 
   /** Creates a new conversation and switches to it */
   @action.bound
-  async createConversation(): Promise<number> {
+  async createConversation(): Promise<uuid> {
     const newId = await this.api.createConversation()
     await this.fetchConversations()
     await this.fetchConversation(newId)
@@ -287,6 +342,8 @@ class RootStore {
 
   @action.bound
   async resetSession(): Promise<void> {
+    this.composer.setLocked(false)
+
     return this.api.resetSession(this.currentConversationId)
   }
 
@@ -295,24 +352,28 @@ class RootStore {
     await this.sendData({
       type: 'visit',
       text: 'User visit',
-      timezone: new Date().getTimezoneOffset() / 60,
+      timezone: -(new Date().getTimezoneOffset() / 60), // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/getTimezoneOffset#description
       language: getUserLocale()
     })
   }
 
   @action.bound
   async extractFeedback(messages: Message[]): Promise<void> {
-    const feedbackEventIds = messages.filter(x => x.payload && x.payload.collectFeedback).map(x => x.incomingEventId)
+    const feedbackMessageIds = messages.filter(x => x.payload && x.payload.collectFeedback).map(x => x.id)
 
-    const feedbackInfo = await this.api.getEventIdsFeedbackInfo(feedbackEventIds)
+    if (!feedbackMessageIds.length) {
+      return
+    }
+
+    const feedbackInfo = await this.api.getMessageIdsFeedbackInfo(feedbackMessageIds)
     runInAction('-> setFeedbackInfo', () => {
-      this.eventFeedbacks = feedbackInfo
+      this.messageFeedbacks = feedbackInfo
     })
   }
 
   @action.bound
-  async sendFeedback(feedback: number, eventId: string): Promise<void> {
-    await this.api.sendFeedback(feedback, eventId)
+  async sendFeedback(feedback: number, messageId: string): Promise<void> {
+    await this.api.sendFeedback(feedback, messageId)
   }
 
   @action.bound
@@ -330,6 +391,11 @@ class RootStore {
   /** Sends an event or a message, depending on how the backend manages those types */
   @action.bound
   async sendData(data: any): Promise<void> {
+    if (!this.isInitialized) {
+      console.warn('[webchat] Cannot send data until the webchat is ready')
+      return
+    }
+
     if (!constants.MESSAGE_TYPES.includes(data.type)) {
       return this.api.sendEvent(data, this.currentConversationId)
     }
@@ -339,10 +405,13 @@ class RootStore {
 
   @action.bound
   async uploadFile(title: string, payload: string, file: File): Promise<void> {
-    const data = new FormData()
-    data.append('file', file)
+    await this.api.uploadFile(file, payload, this.currentConversationId)
+  }
 
-    await this.api.uploadFile(data, this.currentConversationId)
+  /** Sends a message of type voice */
+  @action.bound
+  async sendVoiceMessage(voice: Buffer, ext: string): Promise<void> {
+    return this.api.sendVoiceMessage(voice, ext, this.currentConversationId)
   }
 
   /** Use this method to replace a value or add a new config */
@@ -359,7 +428,7 @@ class RootStore {
 
     if (!this.api) {
       this.bp = bp
-      this.api = new WebchatApi('', bp.axios)
+      this.api = new WebchatApi(bp.axios)
     }
 
     this._applyConfig()
@@ -371,30 +440,39 @@ class RootStore {
     this.view.disableAnimations = this.config.disableAnimations
     this.config.showPoweredBy ? this.view.showPoweredBy() : this.view.hidePoweredBy()
 
-    const locale = getUserLocale(this.config.locale)
-    this.config.locale && this.updateBotUILanguage(locale)
-    document.documentElement.setAttribute('lang', locale)
+    document.title = this.config.botName || window.APP_NAME
 
-    document.title = this.config.botName || 'Botpress Webchat'
+    if (window.APP_FAVICON) {
+      const link = document.querySelector('link[rel="icon"]')
+      link && link.setAttribute('href', window.APP_FAVICON)
+    }
 
-    try {
-      window.USE_SESSION_STORAGE = this.config.useSessionStorage
-    } catch {
-      console.error('Could not set USE_SESSION_STORAGE')
+    if (window.APP_CUSTOM_CSS) {
+      const sheet = document.createElement('link')
+      sheet.rel = 'stylesheet'
+      sheet.href = window.APP_CUSTOM_CSS
+      sheet.type = 'text/css'
+      document.head.appendChild(sheet)
     }
 
     this.api.updateAxiosConfig({ botId: this.config.botId, externalAuthToken: this.config.externalAuthToken })
-    this.api.updateUserId(this.config.userId)
+
+    if (!this.isInitialized) {
+      window.USE_SESSION_STORAGE = this.config.useSessionStorage
+    } else if (window.USE_SESSION_STORAGE !== this.config.useSessionStorage) {
+      console.warn('[WebChat] "useSessionStorage" value cannot be altered once the webchat is initialized')
+    }
+
+    const locale = this.config.locale ? getUserLocale(this.config.locale) : chosenLocale
+    this.updateBotUILanguage(locale)
+    document.documentElement.setAttribute('lang', locale)
+
     this.publishConfigChanged()
   }
 
-  /** When this method is used, the user ID is changed in the configuration, then the socket is updated */
   @action.bound
-  setUserId(userId: string): void {
-    this.config.userId = userId
-    this.resetConversation()
-    this.api.updateUserId(userId)
-    this.publishConfigChanged()
+  async setCustomUserId(userId: string): Promise<void> {
+    return this.api.setCustomUserId(userId)
   }
 
   @action.bound
@@ -409,6 +487,7 @@ class RootStore {
 
   @action.bound
   async updatePreferredLanguage(lang: string): Promise<void> {
+    this.updateBotUILanguage(lang)
     this.preferredLanguage = lang
     await this.api.updateUserPreferredLanguage(lang)
   }
@@ -443,8 +522,10 @@ class RootStore {
 
   @action.bound
   updateBotUILanguage(lang: string): void {
+    lang = getUserLocale(lang) // Ensure language is supported
     runInAction('-> setBotUILanguage', () => {
       this.botUILanguage = lang
+      this.preferredLanguage = lang
       window.BP_STORAGE?.set('bp/channel-web/user-lang', lang)
     })
   }
@@ -463,7 +544,7 @@ class RootStore {
   }
 
   /** Returns the current conversation ID, or the last one if it didn't expired. Otherwise, returns nothing. */
-  private _getCurrentConvoId(): number | undefined {
+  private _getCurrentConvoId(): uuid | undefined {
     if (this.currentConversationId) {
       return this.currentConversationId
     }
@@ -473,7 +554,8 @@ class RootStore {
     }
 
     const lifeTimeMargin = Date.now() - ms(this.config.recentConversationLifetime)
-    const isConversationExpired = new Date(this.conversations[0].last_heard_on).getTime() < lifeTimeMargin
+    const isConversationExpired =
+      new Date(this.conversations[0].lastMessage?.sentOn || this.conversations[0].createdOn).getTime() < lifeTimeMargin
     if (isConversationExpired && this.config.startNewConvoOnTimeout) {
       return
     }
